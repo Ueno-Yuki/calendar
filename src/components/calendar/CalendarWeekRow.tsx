@@ -17,10 +17,10 @@ export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
   const barSectionHeight = totalBarRows * (BAR_HEIGHT + BAR_GAP);
 
   return (
-    <div className="border-b border-zinc-100">
+    <div className="border-b border-zinc-100 flex-1 flex flex-col min-h-0">
       {/* Multi-day event bars */}
       {totalBarRows > 0 && (
-        <div className="relative" style={{ height: barSectionHeight }}>
+        <div className="relative shrink-0" style={{ height: barSectionHeight }}>
           {multiDayBars.map((bar, i) => {
             const leftPct = `${(bar.startCol / 7) * 100}%`;
             const widthPct = `${((bar.endCol - bar.startCol + 1) / 7) * 100}%`;
@@ -57,7 +57,7 @@ export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
       )}
 
       {/* Day cells */}
-      <div className="grid grid-cols-7 divide-x divide-zinc-100">
+      <div className="grid grid-cols-7 divide-x divide-zinc-100 flex-1 min-h-0">
         {days.map((day, colIndex) => (
           <CalendarCell
             key={day.dateStr}

@@ -50,7 +50,7 @@ export default function CalendarGrid({
 
   return (
     <div
-      className="flex flex-col flex-1 select-none relative"
+      className="flex flex-col flex-1 min-h-0 select-none relative"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
@@ -69,13 +69,13 @@ export default function CalendarGrid({
       </div>
 
       {/* Week rows */}
-      <div className="flex flex-col flex-1">
+      <div className="flex flex-col flex-1 min-h-0">
         {weeks.map((week, i) => (
           <CalendarWeekRow key={i} weekData={week} onDayPress={onDayPress} />
         ))}
       </div>
 
-      {/* Loading overlay */}
+      {/* Initial load overlay only */}
       {loading && (
         <div className="absolute inset-0 bg-white/60 flex items-center justify-center z-10">
           <span className="text-sm text-zinc-400">読み込み中…</span>

@@ -27,7 +27,7 @@ export default function CalendarCell({ day, dayOfWeek, chips, onPress }: Props) 
     <button
       type="button"
       onClick={onPress}
-      className={`flex flex-col items-start w-full p-1 text-left min-h-[72px] ${
+      className={`flex flex-col items-start w-full h-full p-1 text-left overflow-hidden ${
         isToday ? 'ring-2 ring-inset ring-zinc-700' : ''
       }`}
     >

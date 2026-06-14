@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Event } from '@/types';
 import { apiFetch, ApiAuthError } from '@/lib/apiClient';
 import CalendarHeader from '@/components/calendar/CalendarHeader';
@@ -15,28 +15,60 @@ function getInitialYearMonth() {
 export default function CalendarPage() {
   const [{ year, month }, setYearMonth] = useState(getInitialYearMonth);
   const [events, setEvents] = useState<Event[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // 初回ロードのみ全画面オーバーレイ
+  const [syncing, setSyncing] = useState(false); // 月切り替え時のヘッダースピナー
   const [authError, setAuthError] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  const cacheRef = useRef<Record<string, Event[]>>({});
+  const prevRefreshKeyRef = useRef(0);
+  const hasLoadedRef = useRef(false);
+
   useEffect(() => {
+    const key = `${year}-${String(month).padStart(2, '0')}`;
+    const isRefreshTriggered = refreshKey !== prevRefreshKeyRef.current;
+    prevRefreshKeyRef.current = refreshKey;
+
+    // 予定作成・削除後はキャッシュを無効化して再取得する
+    if (isRefreshTriggered) {
+      delete cacheRef.current[key];
+    }
+
+    // キャッシュヒット: 月切り替えのみ（refreshKey 起因の再取得は除く）
+    if (!isRefreshTriggered && cacheRef.current[key]) {
+      setEvents(cacheRef.current[key]);
+      return;
+    }
+
+    if (!hasLoadedRef.current) {
+      setLoading(true);
+    } else {
+      setSyncing(true);
+    }
+
     let cancelled = false;
-    setLoading(true);
     apiFetch(`/api/events?year=${year}&month=${month}`)
       .then((res) => {
         if (!res.ok) throw new Error('fetch failed');
         return res.json() as Promise<Event[]>;
       })
       .then((data) => {
-        if (!cancelled) setEvents(data);
+        if (cancelled) return;
+        cacheRef.current[key] = data;
+        setEvents(data);
+        hasLoadedRef.current = true;
       })
       .catch((err: unknown) => {
         if (err instanceof ApiAuthError) setAuthError(true);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setSyncing(false);
+        }
       });
+
     return () => {
       cancelled = true;
     };
@@ -63,8 +95,8 @@ export default function CalendarPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-white">
-      <CalendarHeader year={year} month={month} />
+    <div className="flex flex-col h-[100dvh] bg-white">
+      <CalendarHeader year={year} month={month} syncing={syncing} />
       <CalendarGrid
         year={year}
         month={month}
