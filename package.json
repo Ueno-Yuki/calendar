@@ -11,6 +11,7 @@
   "dependencies": {
     "@holiday-jp/holiday_jp": "^2.5.1",
     "googleapis": "^173.0.0",
+    "lucide-react": "^1.18.0",
     "next": "16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4"

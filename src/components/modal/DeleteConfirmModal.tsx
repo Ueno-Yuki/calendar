@@ -1,5 +1,6 @@
 'use client';
 
+import { MapPin } from 'lucide-react';
 import type { Event } from '@/types';
 
 interface Props {
@@ -48,7 +49,10 @@ export default function DeleteConfirmModal({ event, onCancel, onConfirm, isDelet
             {endLabel}
           </p>
           {event.location && (
-            <p className="text-xs text-zinc-500">📍 {event.location}</p>
+            <p className="flex items-center gap-0.5 text-xs text-zinc-500">
+              <MapPin size={11} className="shrink-0" />
+              {event.location}
+            </p>
           )}
         </div>
 

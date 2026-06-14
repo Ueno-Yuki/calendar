@@ -41,20 +41,17 @@ export default function CalendarCell({ day, dayOfWeek, chips, onPress }: Props) 
           {holidayName}
         </span>
       )}
-      <div className="flex flex-col gap-px w-full mt-0.5">
+      {/* タイトルのみ表示。対象者は文字色で判別。件数表示なし。 */}
+      <div className="flex flex-col gap-px w-full mt-0.5 overflow-hidden">
         {chips.map((chip) => {
           const color = FAMILY_COLORS[chip.person];
           return (
             <div
               key={chip.person}
-              style={{
-                backgroundColor: chip.primaryEvent.all_day ? color.main : color.light,
-                color: chip.primaryEvent.all_day ? '#fff' : color.main,
-              }}
-              className="text-[9px] px-0.5 rounded leading-4 truncate"
+              style={{ color: color.main }}
+              className="text-[9px] leading-4 truncate"
             >
-              {color.label} {chip.primaryEvent.title}
-              {chip.extraCount > 0 ? ` +${chip.extraCount}` : ''}
+              {chip.primaryEvent.title}
             </div>
           );
         })}

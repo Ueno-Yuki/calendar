@@ -45,9 +45,6 @@ export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
                 className="flex items-center overflow-hidden"
               >
                 <span className="text-white text-[10px] truncate leading-none">
-                  {isStart && (
-                    <span className="mr-0.5 font-medium">{color.label}</span>
-                  )}
                   {bar.event.title}
                 </span>
               </div>

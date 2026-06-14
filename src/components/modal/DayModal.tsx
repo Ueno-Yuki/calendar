@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useRef } from 'react';
+import { X, Plus, Trash2, MapPin } from 'lucide-react';
 import type { Event, FamilyRole } from '@/types';
 import { FAMILY_COLORS } from '@/lib/colors';
 import { STORAGE_KEY } from '@/lib/auth';
@@ -141,9 +142,7 @@ export default function DayModal({
                 aria-label="閉じる"
                 className="p-1 text-zinc-400 hover:text-zinc-600"
               >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
+                <X size={20} strokeWidth={2.5} />
               </button>
               <h2 className={`text-base font-semibold ${dowColorClass}`}>{heading}</h2>
               <button
@@ -152,9 +151,7 @@ export default function DayModal({
                 aria-label="予定を追加"
                 className="p-1 text-zinc-600 hover:text-zinc-900"
               >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
+                <Plus size={22} strokeWidth={2.5} />
               </button>
             </div>
 
@@ -276,12 +273,7 @@ function SwipeableEventCard({
             className="flex items-center justify-center w-full h-full"
             aria-label="削除"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="3,6 5,6 21,6" />
-              <path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6" />
-              <path d="M10,11v6M14,11v6" />
-              <path d="M9,6V4a1,1,0,0,1,1-1h4a1,1,0,0,1,1,1v2" />
-            </svg>
+            <Trash2 size={20} stroke="white" strokeWidth={2} />
           </button>
         </div>
       )}
@@ -347,17 +339,15 @@ function EventCard({ event, showTime, canDelete, onDeleteRequest }: EventCardPro
             aria-label="削除"
             className="shrink-0 p-0.5 -mt-0.5 text-zinc-300 hover:text-red-400 active:text-red-500"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="3,6 5,6 21,6" />
-              <path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6" />
-              <path d="M10,11v6M14,11v6" />
-              <path d="M9,6V4a1,1,0,0,1,1-1h4a1,1,0,0,1,1,1v2" />
-            </svg>
+            <Trash2 size={15} strokeWidth={2} />
           </button>
         )}
       </div>
       {event.location && (
-        <p className="text-xs text-zinc-500 mt-1 truncate">📍 {event.location}</p>
+        <p className="flex items-center gap-0.5 text-xs text-zinc-500 mt-1 truncate">
+          <MapPin size={11} className="shrink-0" />
+          {event.location}
+        </p>
       )}
       {event.memo && (
         <p className="text-xs text-zinc-400 mt-0.5 line-clamp-2 whitespace-pre-line">
