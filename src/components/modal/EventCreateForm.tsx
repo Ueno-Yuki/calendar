@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { CalendarDays, Clock, MapPin, FileText, ToggleLeft, ToggleRight } from 'lucide-react';
 import type { EventTemplate, FamilyRole } from '@/types';
 import { apiFetch } from '@/lib/apiClient';
 import { STORAGE_KEY } from '@/lib/auth';
@@ -22,10 +23,11 @@ function roundTo5Min(date: Date): { hour: number; minute: number } {
   return { hour: date.getHours(), minute: rounded };
 }
 
-function formatDate(dateStr: string): string {
-  if (!dateStr) return '日付を選択';
+// 短縮表示: 6/15(月)
+function formatDateShort(dateStr: string): string {
+  if (!dateStr) return '日付';
   const d = new Date(`${dateStr}T00:00:00`);
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日(${DOW_JA[d.getDay()]})`;
+  return `${d.getMonth() + 1}/${d.getDate()}(${DOW_JA[d.getDay()]})`;
 }
 
 function readCurrentRole(): FamilyRole | null {
@@ -65,13 +67,9 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [suggestions, setSuggestions] = useState<EventTemplate[]>([]);
 
-  // タイトル入力中にサジェストを取得（300ms デバウンス）
   useEffect(() => {
     const query = title.trim();
-    if (!query) {
-      setSuggestions([]);
-      return;
-    }
+    if (!query) { setSuggestions([]); return; }
     const timer = setTimeout(async () => {
       try {
         const params = new URLSearchParams({ title: query });
@@ -88,13 +86,11 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
   const applyTemplate = (template: EventTemplate) => {
     if (template.start_time) {
       const [h, m] = template.start_time.split(':').map(Number);
-      setStartHour(h);
-      setStartMinute(m);
+      setStartHour(h); setStartMinute(m);
     }
     if (template.end_time) {
       const [h, m] = template.end_time.split(':').map(Number);
-      setEndHour(h);
-      setEndMinute(m);
+      setEndHour(h); setEndMinute(m);
     }
     setLocation(template.location);
     setMemo(template.memo);
@@ -108,7 +104,6 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
     if (!endDate) errs.push('終了日を入力してください');
     if (startDate && endDate && endDate < startDate)
       errs.push('終了日は開始日以降を指定してください');
-    // 終日OFFの場合は開始時間必須
     if (!allDay && (startHour == null || startMinute == null))
       errs.push('開始時間を入力してください');
     if (!allDay && startDate === endDate) {
@@ -120,10 +115,7 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
 
   const handleSave = async () => {
     const errs = validate();
-    if (errs.length > 0) {
-      setErrors(errs);
-      return;
-    }
+    if (errs.length > 0) { setErrors(errs); return; }
     setErrors([]);
     setSubmitting(true);
     try {
@@ -163,7 +155,8 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
+
+      {/* ヘッダー */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 shrink-0">
         <button
           type="button"
@@ -184,98 +177,91 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         </button>
       </div>
 
-      {/* Scrollable form body */}
-      <div className="overflow-y-auto flex-1 px-4 py-4 flex flex-col gap-5 pb-8">
-        {/* Errors */}
+      {/* スクロール可能なフォーム本体 */}
+      <div className="overflow-y-auto flex-1 pb-8">
+
+        {/* エラーバナー */}
         {errors.length > 0 && (
-          <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+          <div className="mx-4 mt-3 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
             {errors.map((e, i) => (
-              <p key={i} className="text-sm text-red-600 leading-5">
-                {e}
-              </p>
+              <p key={i} className="text-sm text-red-600 leading-5">{e}</p>
             ))}
           </div>
         )}
 
-        {/* Title with suggestions */}
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-zinc-500">
-            タイトル <span className="text-red-500">*</span>
-          </label>
-          <div className="relative">
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="予定のタイトル"
-              className="w-full h-11 border border-zinc-200 rounded-xl px-3 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-300"
-            />
-            {showSuggestions && (
-              <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
-                {suggestions.map((s) => {
-                  const color = FAMILY_COLORS[s.person];
-                  const timeLabel = s.start_time
-                    ? s.end_time
-                      ? `${s.start_time}〜${s.end_time}`
-                      : s.start_time
-                    : '';
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onPointerDown={(e) => e.preventDefault()}
-                      onClick={() => applyTemplate(s)}
-                      className="w-full text-left px-3 py-2.5 hover:bg-zinc-50 border-b border-zinc-100 last:border-0"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span
-                          style={{ color: color.main }}
-                          className="text-[10px] font-semibold shrink-0"
-                        >
-                          {color.label}
-                        </span>
-                        <span className="text-sm text-zinc-900 truncate flex-1">{s.title}</span>
-                        {timeLabel && (
-                          <span className="text-[10px] text-zinc-400 shrink-0">{timeLabel}</span>
-                        )}
-                      </div>
-                      {s.location && (
-                        <p className="text-[10px] text-zinc-400 mt-0.5 pl-5 truncate">
-                          📍 {s.location}
-                        </p>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+        {/* タイトル — 大きめ入力 */}
+        <div className="relative px-4 pt-5 pb-4 border-b border-zinc-100">
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="予定のタイトル"
+            style={{ fontSize: 20 }}
+            className="w-full font-medium text-zinc-900 placeholder-zinc-300 bg-transparent focus:outline-none"
+          />
+          {showSuggestions && (
+            <div className="absolute z-10 left-4 right-4 top-full mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
+              {suggestions.map((s) => {
+                const color = FAMILY_COLORS[s.person];
+                const timeLabel = s.start_time
+                  ? s.end_time ? `${s.start_time}〜${s.end_time}` : s.start_time
+                  : '';
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onPointerDown={(e) => e.preventDefault()}
+                    onClick={() => applyTemplate(s)}
+                    className="w-full text-left px-3 py-2.5 hover:bg-zinc-50 border-b border-zinc-100 last:border-0 active:bg-zinc-100"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span style={{ color: color.main }} className="text-[10px] font-semibold shrink-0">{color.label}</span>
+                      <span className="text-sm text-zinc-900 truncate flex-1">{s.title}</span>
+                      {timeLabel && <span className="text-[10px] text-zinc-400 shrink-0">{timeLabel}</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        {/* All-day toggle */}
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-zinc-700">終日</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={allDay}
-            onClick={() => setAllDay((v) => !v)}
-            className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-              allDay ? 'bg-zinc-800' : 'bg-zinc-200'
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
-                allDay ? 'translate-x-5' : 'translate-x-0'
+        {/* リスト行 */}
+
+        {/* カレンダー（表示のみ） */}
+        <ListRow icon={<CalendarDays size={18} />}>
+          <span className="text-sm text-zinc-400">家族カレンダー</span>
+        </ListRow>
+
+        {/* 終日トグル */}
+        <ListRow icon={allDay
+          ? <ToggleRight size={18} className="text-zinc-700" />
+          : <ToggleLeft size={18} />
+        }>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-zinc-700">終日</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={allDay}
+              onClick={() => setAllDay((v) => !v)}
+              className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
+                allDay ? 'bg-zinc-800' : 'bg-zinc-200'
               }`}
-            />
-          </button>
-        </div>
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+                  allDay ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </ListRow>
 
-        {/* Start row: date + time (if !allDay) */}
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium text-zinc-500">開始</span>
+        {/* 開始 */}
+        <ListRow icon={<Clock size={18} />}>
           <div className="flex items-center gap-2">
+            <span className="text-sm text-zinc-500 shrink-0 w-8">開始</span>
             <DateButton value={startDate} onChange={handleStartDateChange} label="開始日" />
             {!allDay && (
               <TimeSelect
@@ -286,12 +272,12 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
               />
             )}
           </div>
-        </div>
+        </ListRow>
 
-        {/* End row: date + time (if !allDay) */}
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium text-zinc-500">終了</span>
+        {/* 終了（アイコンなし — 開始行の続き） */}
+        <ListRow>
           <div className="flex items-center gap-2">
+            <span className="text-sm text-zinc-500 shrink-0 w-8">終了</span>
             <DateButton value={endDate} min={startDate} onChange={setEndDate} label="終了日" />
             {!allDay && (
               <TimeSelect
@@ -302,40 +288,67 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
               />
             )}
           </div>
-        </div>
+        </ListRow>
 
-        {/* Location */}
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-zinc-500">場所</label>
+        {/* 場所 */}
+        <ListRow icon={<MapPin size={18} />}>
           <input
             type="text"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
             placeholder="場所を入力"
-            className="h-11 border border-zinc-200 rounded-xl px-3 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-300"
+            style={{ fontSize: 16 }}
+            className="w-full text-zinc-900 placeholder-zinc-400 bg-transparent focus:outline-none"
           />
-        </div>
+        </ListRow>
 
-        {/* Memo */}
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-zinc-500">メモ</label>
+        {/* メモ */}
+        <ListRow icon={<FileText size={18} />} alignTop>
           <textarea
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
             placeholder="メモを入力"
             rows={3}
-            className="border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-300 resize-none"
+            style={{ fontSize: 16 }}
+            className="w-full text-zinc-900 placeholder-zinc-400 bg-transparent focus:outline-none resize-none leading-relaxed"
           />
-        </div>
+        </ListRow>
+
       </div>
     </div>
   );
 }
 
+// ---- ListRow ----
+// TimeTree風リスト行: 左アイコン + 右コンテンツ
+// icon を省略すると空白（幅20px）を確保して上下の行と揃える
+
+interface ListRowProps {
+  icon?: React.ReactNode;
+  alignTop?: boolean;
+  children: React.ReactNode;
+}
+
+function ListRow({ icon, alignTop = false, children }: ListRowProps) {
+  return (
+    <div
+      className={`flex gap-3 px-4 border-b border-zinc-100 min-h-[52px] ${
+        alignTop ? 'items-start py-4' : 'items-center py-3'
+      }`}
+    >
+      {/* アイコン列 — 常に20px確保して行同士を揃える */}
+      <div className="shrink-0 w-5 flex justify-center text-zinc-400">
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
+}
+
 // ---- DateButton ----
-// 日付をボタン風に表示し、タップで native date picker を開く。
-// 透明な <input type="date"> を重ねることで見た目は自由にしつつ
-// iOS / Android の native UI を活用する。
+// 短縮日付（6/15(月)）を表示するボタン。
+// 透明な input[type=date] を重ねてネイティブ日付ピッカーを開く。
+// 非表示inputはfont-sizeをglobals.cssのbase ruleで16pxに確保し、iOSズームを防ぐ。
 
 interface DateButtonProps {
   value: string;
@@ -346,16 +359,17 @@ interface DateButtonProps {
 
 function DateButton({ value, onChange, min, label }: DateButtonProps) {
   return (
-    // flex-1 min-w-0 で日付欄が時間欄を押し潰さないようにする
-    <div className="relative flex-1 min-w-0">
-      {/* 表示層（pointer-events-none でタップを透過させる） */}
+    <div className="relative shrink-0">
+      {/* 表示層 */}
       <div
-        className="flex items-center h-11 px-3 bg-zinc-100 rounded-xl pointer-events-none select-none"
+        className="flex items-center h-9 px-2.5 bg-zinc-100 rounded-lg pointer-events-none select-none"
         aria-hidden="true"
       >
-        <span className="text-sm text-zinc-900 truncate leading-none">{formatDate(value)}</span>
+        <span className="text-sm text-zinc-900 whitespace-nowrap leading-none">
+          {formatDateShort(value)}
+        </span>
       </div>
-      {/* 透明な入力層（タップを受けて native date picker を開く） */}
+      {/* タップ層（透明） — font-sizeはbase ruleで16pxになりiOSズームしない */}
       <input
         type="date"
         value={value}
@@ -369,8 +383,9 @@ function DateButton({ value, onChange, min, label }: DateButtonProps) {
 }
 
 // ---- TimeSelect ----
-// 時・分を select で選択する。appearance-none でブラウザ標準矢印を非表示にし、
-// ボタン風の見た目にする。shrink-0 で幅が潰れないようにする。
+// 「20:45」のように見える時刻入力。
+// 時・分を別々の select で入力するが、ひとつのボタン風UIとして見せる。
+// iOS zoom防止のためfont-sizeをinline styleで16pxに固定する。
 
 interface TimeSelectProps {
   hour: number;
@@ -381,29 +396,26 @@ interface TimeSelectProps {
 
 function TimeSelect({ hour, minute, onHourChange, onMinuteChange }: TimeSelectProps) {
   return (
-    // shrink-0 で日付欄が伸びても時間欄の幅が縮まないようにする
-    <div className="shrink-0 flex items-center h-11 bg-zinc-100 rounded-xl px-2.5 gap-0.5">
+    <div className="shrink-0 flex items-center h-9 bg-zinc-100 rounded-lg px-2 gap-px">
       <select
         value={hour}
         onChange={(e) => onHourChange(Number(e.target.value))}
-        className="h-full w-7 bg-transparent text-sm text-zinc-900 appearance-none text-center focus:outline-none"
+        style={{ fontSize: 16 }}
+        className="h-full w-8 bg-transparent text-zinc-900 appearance-none text-center focus:outline-none"
       >
         {HOUR_LIST.map((h) => (
-          <option key={h} value={h}>
-            {pad2(h)}
-          </option>
+          <option key={h} value={h}>{pad2(h)}</option>
         ))}
       </select>
       <span className="text-sm text-zinc-900 select-none leading-none">:</span>
       <select
         value={minute}
         onChange={(e) => onMinuteChange(Number(e.target.value))}
-        className="h-full w-7 bg-transparent text-sm text-zinc-900 appearance-none text-center focus:outline-none"
+        style={{ fontSize: 16 }}
+        className="h-full w-8 bg-transparent text-zinc-900 appearance-none text-center focus:outline-none"
       >
         {MINUTE_LIST.map((m) => (
-          <option key={m} value={m}>
-            {pad2(m)}
-          </option>
+          <option key={m} value={m}>{pad2(m)}</option>
         ))}
       </select>
     </div>

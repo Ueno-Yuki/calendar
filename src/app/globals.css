@@ -26,11 +26,12 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
-/* iOSズーム防止: input/select/textarea は16px以上必須 */
+/* iOSズーム防止のデフォルト: クラス指定のない input/select/textarea を16pxにする
+   明示的なクラスやinline styleがある場合はそちらが優先される */
 @layer base {
   input,
   select,
   textarea {
-    font-size: 16px !important;
+    font-size: 16px;
   }
 }
