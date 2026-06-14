@@ -4,6 +4,7 @@ import { getCurrentUser, AuthError } from '@/lib/auth';
 import { updateRow } from '@/lib/sheets';
 import { findEventById, eventToValues } from '@/lib/eventsDb';
 import { deleteGCalEvent, updateGCalEvent } from '@/lib/googleCalendar';
+import { sendInstantNotification } from '@/lib/notificationService';
 
 // ---- バリデーション ----
 
@@ -185,6 +186,10 @@ export async function DELETE(
     };
 
     await updateRow(found.sheetName, found.dataRowIndex, eventToValues(deleted));
+
+    // 本人以外の家族へ即時Push通知（失敗しても削除成功扱い）
+    sendInstantNotification('event_deleted', deleted, currentUser.role).catch(() => {});
+
     return Response.json({ ok: true });
   } catch {
     return Response.json({ error: '予定の削除に失敗しました' }, { status: 500 });

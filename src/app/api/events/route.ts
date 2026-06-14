@@ -6,6 +6,7 @@ import { parseEventRow, eventToValues } from '@/lib/eventsDb';
 import { upsertTemplate } from '@/lib/templatesDb';
 import { getSyncMeta } from '@/lib/syncMetaDb';
 import { createGCalEvent } from '@/lib/googleCalendar';
+import { sendInstantNotification } from '@/lib/notificationService';
 
 // ---- 日付ユーティリティ ----
 
@@ -216,6 +217,9 @@ export async function POST(request: NextRequest) {
       location: event.location,
       memo: event.memo,
     }).catch(() => {});
+
+    // 本人以外の家族へ即時Push通知（失敗しても登録成功扱い）
+    sendInstantNotification('event_created', event, currentUser.role).catch(() => {});
 
     return Response.json(event, { status: 201 });
   } catch {

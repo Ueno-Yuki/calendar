@@ -29,6 +29,8 @@ export default function CalendarPage() {
   const [authError, setAuthError] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  // 通知タップ時の /?date=YYYY-MM-DD パラメータで自動表示する日付
+  const [pendingDate, setPendingDate] = useState<string | null>(null);
 
   const [showSettings, setShowSettings] = useState(false);
 
@@ -44,6 +46,26 @@ export default function CalendarPage() {
   useEffect(() => {
     selectedDateRef.current = selectedDate;
   }, [selectedDate]);
+
+  // 通知タップ時の date パラメータを読み取り、対象月へ移動してDayModalを予約する
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const dateParam = params.get('date');
+    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+      const [y, m] = dateParam.split('-').map(Number);
+      setPendingDate(dateParam);
+      setYearMonth({ year: y, month: m });
+      // URLを即座にクリーンアップ
+      window.history.replaceState({}, '', '/');
+    }
+  }, []);
+
+  // イベント読み込み完了後に pendingDate の DayModal を開く
+  useEffect(() => {
+    if (!pendingDate || loading) return;
+    setSelectedDate(pendingDate);
+    setPendingDate(null);
+  }, [pendingDate, loading]);
 
   const cacheRef = useRef<Record<string, Event[]>>({});
   const prevRefreshKeyRef = useRef(0);
