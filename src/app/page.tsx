@@ -6,6 +6,7 @@ import { apiFetch, ApiAuthError } from '@/lib/apiClient';
 import CalendarHeader from '@/components/calendar/CalendarHeader';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import DayModal from '@/components/modal/DayModal';
+import SettingsModal from '@/components/modal/SettingsModal';
 
 interface EventsResponse {
   events: Event[];
@@ -28,6 +29,8 @@ export default function CalendarPage() {
   const [authError, setAuthError] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const [showSettings, setShowSettings] = useState(false);
 
   // Google同期UX状態
   const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
@@ -170,7 +173,7 @@ export default function CalendarPage() {
 
   return (
     <div className="flex flex-col h-[100dvh] bg-white" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      <CalendarHeader year={year} month={month} syncing={syncing || isGoogleSyncing} />
+      <CalendarHeader year={year} month={month} syncing={syncing || isGoogleSyncing} onSettingsOpen={() => setShowSettings(true)} />
 
       {/* 入力中に同期完了した場合の保留バナー */}
       {showUpdateBanner && (
@@ -197,6 +200,7 @@ export default function CalendarPage() {
           onEventDeleted={handleEventDeleted}
         />
       )}
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   );
 }
