@@ -8,20 +8,25 @@ import { STORAGE_KEY } from '@/lib/auth';
 import type { StoredUser } from '@/lib/auth';
 import { FAMILY_COLORS } from '@/lib/colors';
 import { isKappaTitle, formatEndTime, KAPPA_LAST_END_TIME } from '@/lib/kappaShift';
+import TimePickerSheet from '@/components/modal/TimePickerSheet';
 
-const HOUR_LIST = Array.from({ length: 24 }, (_, i) => i);
-const MINUTE_LIST = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 const DOW_JA = ['日', '月', '火', '水', '木', '金', '土'];
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-function roundTo5Min(date: Date): { hour: number; minute: number } {
+function roundTo5Min(date: Date): string {
+  const h = date.getHours();
   const m = date.getMinutes();
   const rounded = Math.ceil(m / 5) * 5;
-  if (rounded >= 60) return { hour: (date.getHours() + 1) % 24, minute: 0 };
-  return { hour: date.getHours(), minute: rounded };
+  if (rounded >= 60) return `${pad2((h + 1) % 24)}:00`;
+  return `${pad2(h)}:${pad2(rounded)}`;
+}
+
+function addOneHour(time: string): string {
+  const [h, m] = time.split(':').map(Number);
+  return `${pad2((h + 1) % 24)}:${pad2(m)}`;
 }
 
 // 短縮表示: 6/15(月)
@@ -50,24 +55,25 @@ interface Props {
 
 export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
   const now = new Date();
-  const { hour: initHour, minute: initMin } = roundTo5Min(now);
-  const initEndHour = (initHour + 1) % 24;
+  const initStartTime = roundTo5Min(now);
+  const initEndTime = addOneHour(initStartTime);
 
   const [currentRole] = useState<FamilyRole | null>(readCurrentRole);
   const [title, setTitle] = useState('');
   const [startDate, setStartDate] = useState(dateStr);
   const [endDate, setEndDate] = useState(dateStr);
   const [allDay, setAllDay] = useState(false);
-  const [startHour, setStartHour] = useState(initHour);
-  const [startMinute, setStartMinute] = useState(initMin);
-  const [endHour, setEndHour] = useState(initEndHour);
-  const [endMinute, setEndMinute] = useState(initMin);
+  const [startTime, setStartTime] = useState(initStartTime);
+  const [endTime, setEndTime] = useState(initEndTime);
+  const [isLast, setIsLast] = useState(false);
   const [location, setLocation] = useState('');
   const [memo, setMemo] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [suggestions, setSuggestions] = useState<EventTemplate[]>([]);
-  const [isLast, setIsLast] = useState(false);
+
+  // どの時刻ピッカーを開いているか
+  const [timePickerFor, setTimePickerFor] = useState<'start' | 'end' | null>(null);
 
   // 母 + かっぱタイトルの場合のみ「ラスト」選択肢を表示
   const showLastOption = currentRole === 'mother' && isKappaTitle(title);
@@ -94,13 +100,14 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
   }, [title, currentRole]);
 
   const applyTemplate = (template: EventTemplate) => {
-    if (template.start_time) {
-      const [h, m] = template.start_time.split(':').map(Number);
-      setStartHour(h); setStartMinute(m);
-    }
+    if (template.start_time) setStartTime(template.start_time);
     if (template.end_time) {
-      const [h, m] = template.end_time.split(':').map(Number);
-      setEndHour(h); setEndMinute(m);
+      if (template.end_time === KAPPA_LAST_END_TIME && showLastOption) {
+        setIsLast(true);
+      } else {
+        setEndTime(template.end_time);
+        setIsLast(false);
+      }
     }
     setLocation(template.location);
     setMemo(template.memo);
@@ -114,13 +121,13 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
     if (!endDate) errs.push('終了日を入力してください');
     if (startDate && endDate && endDate < startDate)
       errs.push('終了日は開始日以降を指定してください');
-    if (!allDay && (startHour == null || startMinute == null))
+    if (!allDay && !startTime)
       errs.push('開始時間を入力してください');
     if (!allDay && startDate === endDate) {
-      // ラスト選択時は end = 23:59 として判定
-      const effEndH = isLast ? 23 : endHour;
-      const effEndM = isLast ? 59 : endMinute;
-      if (effEndH * 60 + effEndM <= startHour * 60 + startMinute)
+      const [startH, startM] = startTime.split(':').map(Number);
+      const effEndH = isLast ? 23 : parseInt(endTime.split(':')[0]);
+      const effEndM = isLast ? 59 : parseInt(endTime.split(':')[1]);
+      if (effEndH * 60 + effEndM <= startH * 60 + startM)
         errs.push('終了時間は開始時間より後を指定してください');
     }
     return errs;
@@ -137,8 +144,8 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         start_date: startDate,
         end_date: endDate,
         all_day: allDay,
-        start_time: allDay ? '' : `${pad2(startHour)}:${pad2(startMinute)}`,
-        end_time: allDay ? '' : isLast ? KAPPA_LAST_END_TIME : `${pad2(endHour)}:${pad2(endMinute)}`,
+        start_time: allDay ? '' : startTime,
+        end_time: allDay ? '' : isLast ? KAPPA_LAST_END_TIME : endTime,
         location,
         memo,
       };
@@ -281,11 +288,9 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
             <div className="ml-auto flex items-center gap-2">
               <DateButton value={startDate} onChange={handleStartDateChange} label="開始日" />
               {!allDay && (
-                <TimeSelect
-                  hour={startHour}
-                  minute={startMinute}
-                  onHourChange={setStartHour}
-                  onMinuteChange={setStartMinute}
+                <TimeButton
+                  value={startTime}
+                  onClick={() => setTimePickerFor('start')}
                 />
               )}
             </div>
@@ -299,35 +304,11 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
             <div className="ml-auto flex items-center gap-2">
               <DateButton value={endDate} min={startDate} onChange={setEndDate} label="終了日" />
               {!allDay && (
-                isLast ? (
-                  /* ラスト選択中 — ダークボタンをタップで解除 */
-                  <button
-                    type="button"
-                    onClick={() => setIsLast(false)}
-                    className="shrink-0 h-9 px-3 rounded-lg bg-zinc-800 text-sm text-white font-medium"
-                  >
-                    ラスト
-                  </button>
-                ) : (
-                  <>
-                    <TimeSelect
-                      hour={endHour}
-                      minute={endMinute}
-                      onHourChange={setEndHour}
-                      onMinuteChange={setEndMinute}
-                    />
-                    {/* 母 + かっぱタイトルのときのみ「ラスト」ボタンを表示 */}
-                    {showLastOption && (
-                      <button
-                        type="button"
-                        onClick={() => setIsLast(true)}
-                        className="shrink-0 h-9 px-2.5 rounded-lg bg-zinc-100 text-sm text-zinc-500 active:bg-zinc-200"
-                      >
-                        ラスト
-                      </button>
-                    )}
-                  </>
-                )
+                <TimeButton
+                  value={isLast ? 'ラスト' : endTime}
+                  isLast={isLast}
+                  onClick={() => setTimePickerFor('end')}
+                />
               )}
             </div>
           </div>
@@ -358,13 +339,32 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         </ListRow>
 
       </div>
+
+      {/* 開始時刻ピッカー */}
+      {timePickerFor === 'start' && (
+        <TimePickerSheet
+          value={startTime}
+          onSelect={(t) => setStartTime(t)}
+          onClose={() => setTimePickerFor(null)}
+        />
+      )}
+
+      {/* 終了時刻ピッカー */}
+      {timePickerFor === 'end' && (
+        <TimePickerSheet
+          value={endTime}
+          isCurrentLast={isLast}
+          showLastOption={showLastOption}
+          onSelect={(t) => { setEndTime(t); setIsLast(false); }}
+          onSelectLast={() => setIsLast(true)}
+          onClose={() => setTimePickerFor(null)}
+        />
+      )}
     </div>
   );
 }
 
 // ---- ListRow ----
-// TimeTree風リスト行: 左アイコン + 右コンテンツ
-// icon を省略すると空白（幅20px）を確保して上下の行と揃える
 
 interface ListRowProps {
   icon?: React.ReactNode;
@@ -379,7 +379,6 @@ function ListRow({ icon, alignTop = false, children }: ListRowProps) {
         alignTop ? 'items-start py-4' : 'items-center py-3'
       }`}
     >
-      {/* アイコン列 — 常に20px確保して行同士を揃える */}
       <div className="shrink-0 w-5 flex justify-center text-zinc-400">
         {icon}
       </div>
@@ -389,9 +388,6 @@ function ListRow({ icon, alignTop = false, children }: ListRowProps) {
 }
 
 // ---- DateButton ----
-// 短縮日付（6/15(月)）を表示するボタン。
-// 透明な input[type=date] を重ねてネイティブ日付ピッカーを開く。
-// 非表示inputはfont-sizeをglobals.cssのbase ruleで16pxに確保し、iOSズームを防ぐ。
 
 interface DateButtonProps {
   value: string;
@@ -403,7 +399,6 @@ interface DateButtonProps {
 function DateButton({ value, onChange, min, label }: DateButtonProps) {
   return (
     <div className="relative shrink-0">
-      {/* 表示層 */}
       <div
         className="flex items-center justify-center h-9 px-2.5 bg-zinc-100 rounded-lg pointer-events-none select-none"
         aria-hidden="true"
@@ -412,7 +407,6 @@ function DateButton({ value, onChange, min, label }: DateButtonProps) {
           {formatDateShort(value)}
         </span>
       </div>
-      {/* タップ層（透明） — font-sizeはbase ruleで16pxになりiOSズームしない */}
       <input
         type="date"
         value={value}
@@ -425,42 +419,28 @@ function DateButton({ value, onChange, min, label }: DateButtonProps) {
   );
 }
 
-// ---- TimeSelect ----
-// 「20:45」のように見える時刻入力。
-// 時・分を別々の select で入力するが、ひとつのボタン風UIとして見せる。
-// iOS zoom防止のためfont-sizeをinline styleで16pxに固定する。
+// ---- TimeButton ----
+// 選択された時刻を1つの値として表示するボタン。
+// タップするとボトムシート（TimePickerSheet）が開く。
 
-interface TimeSelectProps {
-  hour: number;
-  minute: number;
-  onHourChange: (h: number) => void;
-  onMinuteChange: (m: number) => void;
+interface TimeButtonProps {
+  value: string; // "HH:MM" または "ラスト"
+  isLast?: boolean;
+  onClick: () => void;
 }
 
-function TimeSelect({ hour, minute, onHourChange, onMinuteChange }: TimeSelectProps) {
+function TimeButton({ value, isLast = false, onClick }: TimeButtonProps) {
   return (
-    <div className="shrink-0 flex items-center h-9 bg-zinc-100 rounded-lg px-3 gap-0">
-      <select
-        value={hour}
-        onChange={(e) => onHourChange(Number(e.target.value))}
-        style={{ fontSize: 16 }}
-        className="h-full w-6 bg-transparent text-zinc-900 appearance-none text-center focus:outline-none"
-      >
-        {HOUR_LIST.map((h) => (
-          <option key={h} value={h}>{pad2(h)}</option>
-        ))}
-      </select>
-      <span className="text-sm text-zinc-900 select-none leading-none">:</span>
-      <select
-        value={minute}
-        onChange={(e) => onMinuteChange(Number(e.target.value))}
-        style={{ fontSize: 16 }}
-        className="h-full w-6 bg-transparent text-zinc-900 appearance-none text-center focus:outline-none"
-      >
-        {MINUTE_LIST.map((m) => (
-          <option key={m} value={m}>{pad2(m)}</option>
-        ))}
-      </select>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`shrink-0 h-9 px-3 rounded-lg text-sm font-medium ${
+        isLast
+          ? 'bg-zinc-800 text-white'
+          : 'bg-zinc-100 text-zinc-900'
+      }`}
+    >
+      {value}
+    </button>
   );
 }
