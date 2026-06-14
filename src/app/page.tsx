@@ -80,6 +80,7 @@ export default function CalendarPage() {
           events={events}
           onClose={() => setSelectedDate(null)}
           onEventCreated={() => setRefreshKey((k) => k + 1)}
+          onEventDeleted={() => setRefreshKey((k) => k + 1)}
         />
       )}
     </div>

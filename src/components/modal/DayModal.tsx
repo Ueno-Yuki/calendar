@@ -1,22 +1,51 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import type { Event } from '@/types';
+import { useState, useMemo, useRef } from 'react';
+import type { Event, FamilyRole } from '@/types';
 import { FAMILY_COLORS } from '@/lib/colors';
+import { STORAGE_KEY } from '@/lib/auth';
+import type { StoredUser } from '@/lib/auth';
+import { apiFetch } from '@/lib/apiClient';
 import EventCreateForm from './EventCreateForm';
+import DeleteConfirmModal from './DeleteConfirmModal';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const DELETE_BTN_WIDTH = 64; // px
 
 interface Props {
   dateStr: string;
   events: Event[];
   onClose: () => void;
   onEventCreated: () => void;
+  onEventDeleted: () => void;
 }
 
-export default function DayModal({ dateStr, events, onClose, onEventCreated }: Props) {
+function readCurrentRole(): FamilyRole | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return (JSON.parse(raw) as StoredUser).role;
+  } catch {
+    return null;
+  }
+}
+
+export default function DayModal({
+  dateStr,
+  events,
+  onClose,
+  onEventCreated,
+  onEventDeleted,
+}: Props) {
   const [mode, setMode] = useState<'schedule' | 'create'>('schedule');
+  const [swipedEventId, setSwipedEventId] = useState<string | null>(null);
+  const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Read current user from localStorage once on mount
+  const [currentRole] = useState<FamilyRole | null>(readCurrentRole);
 
   const date = new Date(`${dateStr}T00:00:00`);
   const dow = date.getDay();
@@ -52,12 +81,48 @@ export default function DayModal({ dateStr, events, onClose, onEventCreated }: P
     setMode('schedule');
   };
 
+  const handleDeleteRequest = (event: Event) => {
+    setEventToDelete(event);
+  };
+
+  const handleDeleteCancel = () => {
+    setEventToDelete(null);
+    setSwipedEventId(null);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!eventToDelete) return;
+    setIsDeleting(true);
+    try {
+      const [y, m] = eventToDelete.start_date.split('-');
+      const res = await apiFetch(
+        `/api/events/${eventToDelete.id}?year=${y}&month=${m}`,
+        { method: 'DELETE' },
+      );
+      if (!res.ok) return; // サーバー側エラーは無視して継続
+      setEventToDelete(null);
+      setSwipedEventId(null);
+      onEventDeleted();
+    } catch {
+      // 通信エラーは無視して確認モーダルを閉じる
+      setEventToDelete(null);
+      setSwipedEventId(null);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const canSwipe = (event: Event) => currentRole !== null && event.owner === currentRole;
+
+  // Prevent backdrop from closing modal while create form or delete confirm is open
+  const backdropClickable = mode === 'schedule' && eventToDelete === null;
+
   return (
     <>
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black/40 z-40"
-        onClick={mode === 'schedule' ? onClose : undefined}
+        onClick={backdropClickable ? onClose : undefined}
         aria-hidden="true"
       />
 
@@ -79,34 +144,18 @@ export default function DayModal({ dateStr, events, onClose, onEventCreated }: P
                 aria-label="閉じる"
                 className="p-1 text-zinc-400 hover:text-zinc-600"
               >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <path d="M18 6 6 18M6 6l12 12" />
                 </svg>
               </button>
               <h2 className={`text-base font-semibold ${dowColorClass}`}>{heading}</h2>
               <button
                 type="button"
-                onClick={() => setMode('create')}
+                onClick={() => { setSwipedEventId(null); setMode('create'); }}
                 aria-label="予定を追加"
                 className="p-1 text-zinc-600 hover:text-zinc-900"
               >
-                <svg
-                  width="22"
-                  height="22"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <path d="M12 5v14M5 12h14" />
                 </svg>
               </button>
@@ -119,7 +168,16 @@ export default function DayModal({ dateStr, events, onClose, onEventCreated }: P
                   <p className="text-[10px] text-zinc-400 mb-1.5">終日・複数日</p>
                   <div className="flex flex-col gap-1.5">
                     {allDaySection.map((e) => (
-                      <EventCard key={e.id} event={e} showTime={false} />
+                      <SwipeableEventCard
+                        key={e.id}
+                        event={e}
+                        showTime={false}
+                        isSwiped={swipedEventId === e.id}
+                        canDelete={canSwipe(e)}
+                        onSwipe={() => setSwipedEventId(e.id)}
+                        onCloseSwipe={() => setSwipedEventId(null)}
+                        onDeleteRequest={handleDeleteRequest}
+                      />
                     ))}
                   </div>
                 </div>
@@ -137,7 +195,16 @@ export default function DayModal({ dateStr, events, onClose, onEventCreated }: P
                       </div>
                       <div className="flex-1 py-1 pr-3 flex flex-col gap-1.5">
                         {evs.map((e) => (
-                          <EventCard key={e.id} event={e} showTime />
+                          <SwipeableEventCard
+                            key={e.id}
+                            event={e}
+                            showTime
+                            isSwiped={swipedEventId === e.id}
+                            canDelete={canSwipe(e)}
+                            onSwipe={() => setSwipedEventId(e.id)}
+                            onCloseSwipe={() => setSwipedEventId(null)}
+                            onDeleteRequest={handleDeleteRequest}
+                          />
                         ))}
                       </div>
                     </div>
@@ -148,9 +215,98 @@ export default function DayModal({ dateStr, events, onClose, onEventCreated }: P
           </>
         )}
       </div>
+
+      {/* Delete confirmation (renders above DayModal sheet) */}
+      {eventToDelete && (
+        <DeleteConfirmModal
+          event={eventToDelete}
+          onCancel={handleDeleteCancel}
+          onConfirm={handleDeleteConfirm}
+          isDeleting={isDeleting}
+        />
+      )}
     </>
   );
 }
+
+// ---- SwipeableEventCard ----
+
+interface SwipeableProps {
+  event: Event;
+  showTime: boolean;
+  isSwiped: boolean;
+  canDelete: boolean;
+  onSwipe: () => void;
+  onCloseSwipe: () => void;
+  onDeleteRequest: (event: Event) => void;
+}
+
+function SwipeableEventCard({
+  event,
+  showTime,
+  isSwiped,
+  canDelete,
+  onSwipe,
+  onCloseSwipe,
+  onDeleteRequest,
+}: SwipeableProps) {
+  const touchStartX = useRef<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    touchStartX.current = null;
+    if (canDelete && dx < -40) {
+      onSwipe();
+    } else if (dx > 20) {
+      onCloseSwipe();
+    }
+  };
+
+  return (
+    <div className="relative overflow-hidden rounded-lg">
+      {/* Delete button (revealed on left swipe) */}
+      {canDelete && (
+        <div
+          className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500"
+          style={{ width: DELETE_BTN_WIDTH }}
+        >
+          <button
+            type="button"
+            onClick={() => onDeleteRequest(event)}
+            className="flex items-center justify-center w-full h-full"
+            aria-label="削除"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3,6 5,6 21,6" />
+              <path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6" />
+              <path d="M10,11v6M14,11v6" />
+              <path d="M9,6V4a1,1,0,0,1,1-1h4a1,1,0,0,1,1,1v2" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Event card (slides left to reveal delete button) */}
+      <div
+        style={{
+          transform: isSwiped ? `translateX(-${DELETE_BTN_WIDTH}px)` : 'translateX(0)',
+          transition: 'transform 0.2s ease-out',
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
+        <EventCard event={event} showTime={showTime} />
+      </div>
+    </div>
+  );
+}
+
+// ---- EventCard ----
 
 function EventCard({ event, showTime }: { event: Event; showTime: boolean }) {
   const color = FAMILY_COLORS[event.person];
