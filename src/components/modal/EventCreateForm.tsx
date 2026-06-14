@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { CalendarDays, Clock, MapPin, FileText, ToggleLeft, ToggleRight } from 'lucide-react';
+import { CalendarDays, Clock, MapPin, FileText, ToggleLeft, ToggleRight, BellOff } from 'lucide-react';
 import type { EventTemplate, FamilyRole } from '@/types';
 import { apiFetch } from '@/lib/apiClient';
 import { STORAGE_KEY } from '@/lib/auth';
@@ -37,6 +37,12 @@ function formatDateShort(dateStr: string): string {
   return `${d.getMonth() + 1}/${d.getDate()}(${DOW_JA[d.getDay()]})`;
 }
 
+/** クライアント側 JST 静音時間帯判定（22:00〜07:59）。サーバー通知制御とは独立した表示用。 */
+function isQuietHoursJst(): boolean {
+  const jstHour = (new Date().getUTCHours() + 9) % 24;
+  return jstHour >= 22 || jstHour < 8;
+}
+
 function readCurrentRole(): FamilyRole | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -58,6 +64,7 @@ interface Props {
 
 export default function EventCreateForm({ dateStr, mode = 'create', initialEvent, onSaved, onCancel }: Props) {
   const now = new Date();
+  const [isQuiet] = useState(isQuietHoursJst);
   // 編集モードでは既存予定の値を初期値として使用する
   const initStartTime = initialEvent?.start_time || roundTo5Min(now);
   const initIsLast = !!initialEvent?.end_time && initialEvent.end_time === KAPPA_LAST_END_TIME;
@@ -359,6 +366,14 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
             className="w-full text-zinc-900 placeholder-zinc-400 bg-transparent focus:outline-none resize-none leading-relaxed"
           />
         </ListRow>
+
+        {/* お休みモード補足（通知停止時間帯の控えめな注釈） */}
+        {isQuiet && (
+          <div className="flex items-center gap-1 mt-2 px-4 text-xs text-slate-500">
+            <BellOff className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+            <span>お休みモード中（22:00〜7:59）は通知されません</span>
+          </div>
+        )}
 
       </div>
 
