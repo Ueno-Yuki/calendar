@@ -7,6 +7,7 @@ import { apiFetch } from '@/lib/apiClient';
 import { STORAGE_KEY } from '@/lib/auth';
 import type { StoredUser } from '@/lib/auth';
 import { FAMILY_COLORS } from '@/lib/colors';
+import type { Event } from '@/types';
 import { isKappaTitle, formatEndTime, KAPPA_LAST_END_TIME } from '@/lib/kappaShift';
 import TimePickerSheet from '@/components/modal/TimePickerSheet';
 
@@ -49,25 +50,31 @@ function readCurrentRole(): FamilyRole | null {
 
 interface Props {
   dateStr: string;
+  mode?: 'create' | 'edit';
+  initialEvent?: Event;
   onSaved: () => void;
   onCancel: () => void;
 }
 
-export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
+export default function EventCreateForm({ dateStr, mode = 'create', initialEvent, onSaved, onCancel }: Props) {
   const now = new Date();
-  const initStartTime = roundTo5Min(now);
-  const initEndTime = addOneHour(initStartTime);
+  // 編集モードでは既存予定の値を初期値として使用する
+  const initStartTime = initialEvent?.start_time || roundTo5Min(now);
+  const initIsLast = !!initialEvent?.end_time && initialEvent.end_time === KAPPA_LAST_END_TIME;
+  const initEndTime = (!initialEvent?.end_time || initIsLast)
+    ? addOneHour(initStartTime)
+    : initialEvent.end_time;
 
   const [currentRole] = useState<FamilyRole | null>(readCurrentRole);
-  const [title, setTitle] = useState('');
-  const [startDate, setStartDate] = useState(dateStr);
-  const [endDate, setEndDate] = useState(dateStr);
-  const [allDay, setAllDay] = useState(false);
+  const [title, setTitle] = useState(initialEvent?.title ?? '');
+  const [startDate, setStartDate] = useState(initialEvent?.start_date ?? dateStr);
+  const [endDate, setEndDate] = useState(initialEvent?.end_date ?? dateStr);
+  const [allDay, setAllDay] = useState(initialEvent?.all_day ?? false);
   const [startTime, setStartTime] = useState(initStartTime);
   const [endTime, setEndTime] = useState(initEndTime);
-  const [isLast, setIsLast] = useState(false);
-  const [location, setLocation] = useState('');
-  const [memo, setMemo] = useState('');
+  const [isLast, setIsLast] = useState(initIsLast);
+  const [location, setLocation] = useState(initialEvent?.location ?? '');
+  const [memo, setMemo] = useState(initialEvent?.memo ?? '');
   const [errors, setErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [suggestions, setSuggestions] = useState<EventTemplate[]>([]);
@@ -149,13 +156,26 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         location,
         memo,
       };
-      const res = await apiFetch('/api/events', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
+
+      let res: Response;
+      if (mode === 'edit' && initialEvent) {
+        // 編集: PUT /api/events/[id]
+        const [y, m] = initialEvent.start_date.split('-');
+        res = await apiFetch(`/api/events/${initialEvent.id}?year=${y}&month=${m}`, {
+          method: 'PUT',
+          body: JSON.stringify(body),
+        });
+      } else {
+        // 新規: POST /api/events
+        res = await apiFetch('/api/events', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+      }
+
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
-        setErrors([data.error ?? '登録に失敗しました']);
+        setErrors([data.error ?? (mode === 'edit' ? '更新に失敗しました' : '登録に失敗しました')]);
         return;
       }
       onSaved();
@@ -186,7 +206,9 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         >
           キャンセル
         </button>
-        <h2 className="text-base font-semibold text-zinc-900">予定を登録</h2>
+        <h2 className="text-base font-semibold text-zinc-900">
+          {mode === 'edit' ? '予定を編集' : '予定を登録'}
+        </h2>
         <button
           type="button"
           onClick={handleSave}

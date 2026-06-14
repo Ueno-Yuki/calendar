@@ -7,6 +7,17 @@ import { appendNotificationLog } from '@/lib/notificationsDb';
 
 const DAY_OF_WEEK = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
+/**
+ * JST (UTC+9) ベースで静音時間帯（22:00〜07:59）かどうかを判定する。
+ * サーバーのタイムゾーン設定に依存せず、UTC を基準に計算する。
+ *
+ * 判定: 22:00 <= jstHour || jstHour < 8
+ */
+export function isQuietHoursJst(date = new Date()): boolean {
+  const jstHour = (date.getUTCHours() + 9) % 24;
+  return jstHour >= 22 || jstHour < 8;
+}
+
 function formatDate(dateStr: string): string {
   // dateStr: YYYY-MM-DD
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -61,49 +72,65 @@ export async function sendInstantNotification(
   const url = `/?date=${event.start_date}`;
   const payload = JSON.stringify({ title: notificationTitle, body, url });
   const now = new Date().toISOString();
+  const quiet = isQuietHoursJst();
 
-  const sendTasks = subscriptions
-    .filter((sub) => {
-      const role = sub.userId as FamilyRole;
-      if (!VALID_ROLES.includes(role) || role === operatorRole) return false;
-      const settings = settingsMap[role];
-      if (!settings?.notification_enabled) return false;
-      if (type === 'event_created' && !settings.instant_event_created_enabled) return false;
-      if (type === 'event_deleted' && !settings.instant_event_deleted_enabled) return false;
-      return true;
-    })
-    .map((sub) =>
-      sendPushToSubscription(sub, payload)
-        .then(() =>
-          appendNotificationLog({
-            type,
-            event_id: event.id,
-            date: event.start_date,
-            target_user_id: sub.userId,
-            scheduled_at: now,
-            sent_at: new Date().toISOString(),
-            status: 'sent',
-            error_message: '',
-          }).catch(() => {}),
-        )
-        .catch((err: unknown) => {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          // 410 Gone はEndpointが失効 → 購読を無効化
-          if (errorMessage.includes('410') || errorMessage.includes('Gone')) {
-            disablePushSubscription(sub.endpoint).catch(() => {});
-          }
-          appendNotificationLog({
-            type,
-            event_id: event.id,
-            date: event.start_date,
-            target_user_id: sub.userId,
-            scheduled_at: now,
-            sent_at: new Date().toISOString(),
-            status: 'failed',
-            error_message: errorMessage.slice(0, 500),
-          }).catch(() => {});
-        }),
-    );
+  // 通知設定でフィルタした送信対象購読リスト
+  const eligibleSubs = subscriptions.filter((sub) => {
+    const role = sub.userId as FamilyRole;
+    if (!VALID_ROLES.includes(role) || role === operatorRole) return false;
+    const settings = settingsMap[role];
+    if (!settings?.notification_enabled) return false;
+    if (type === 'event_created' && !settings.instant_event_created_enabled) return false;
+    if (type === 'event_deleted' && !settings.instant_event_deleted_enabled) return false;
+    return true;
+  });
+
+  const sendTasks = eligibleSubs.map((sub) => {
+    // 静音時間帯（22:00〜07:59 JST）は送信せずにログを記録して正常終了
+    if (quiet) {
+      return appendNotificationLog({
+        type,
+        event_id: event.id,
+        date: event.start_date,
+        target_user_id: sub.userId,
+        scheduled_at: now,
+        sent_at: now,
+        status: 'skipped',
+        error_message: 'quiet_hours',
+      }).catch(() => {});
+    }
+
+    return sendPushToSubscription(sub, payload)
+      .then(() =>
+        appendNotificationLog({
+          type,
+          event_id: event.id,
+          date: event.start_date,
+          target_user_id: sub.userId,
+          scheduled_at: now,
+          sent_at: new Date().toISOString(),
+          status: 'sent',
+          error_message: '',
+        }).catch(() => {}),
+      )
+      .catch((err: unknown) => {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        // 410 Gone はEndpointが失効 → 購読を無効化
+        if (errorMessage.includes('410') || errorMessage.includes('Gone')) {
+          disablePushSubscription(sub.endpoint).catch(() => {});
+        }
+        appendNotificationLog({
+          type,
+          event_id: event.id,
+          date: event.start_date,
+          target_user_id: sub.userId,
+          scheduled_at: now,
+          sent_at: new Date().toISOString(),
+          status: 'failed',
+          error_message: errorMessage.slice(0, 500),
+        }).catch(() => {});
+      });
+  });
 
   await Promise.allSettled(sendTasks);
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useRef } from 'react';
-import { X, Plus, Trash2, MapPin } from 'lucide-react';
+import { X, Plus, Trash2, Pencil, MapPin } from 'lucide-react';
 import { formatEventTimeRange } from '@/lib/kappaShift';
 import type { Event, FamilyRole } from '@/types';
 import { FAMILY_COLORS } from '@/lib/colors';
@@ -12,7 +12,7 @@ import EventCreateForm from './EventCreateForm';
 import DeleteConfirmModal from './DeleteConfirmModal';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
-const DELETE_BTN_WIDTH = 64; // px
+const ACTION_BTN_WIDTH = 72; // px — 削除・編集ボタンの幅
 
 interface Props {
   dateStr: string;
@@ -40,9 +40,11 @@ export default function DayModal({
   onEventCreated,
   onEventDeleted,
 }: Props) {
-  const [mode, setMode] = useState<'schedule' | 'create'>('schedule');
+  const [mode, setMode] = useState<'schedule' | 'create' | 'edit'>('schedule');
   const [swipedEventId, setSwipedEventId] = useState<string | null>(null);
+  const [swipedDirection, setSwipedDirection] = useState<'left' | 'right'>('left');
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
+  const [eventToEdit, setEventToEdit] = useState<Event | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const [currentRole] = useState<FamilyRole | null>(readCurrentRole);
@@ -57,12 +59,10 @@ export default function DayModal({
     [events, dateStr],
   );
 
-  // 終日・複数日予定（当日開始でない複数日含む）
   const allDaySection = dayEvents.filter(
     (e) => e.all_day || (e.start_date !== e.end_date && e.start_date !== dateStr),
   );
 
-  // 時刻付き予定を開始時刻昇順でソート
   const timedSection = useMemo(
     () =>
       dayEvents
@@ -71,13 +71,32 @@ export default function DayModal({
     [dayEvents],
   );
 
+  // 新規作成保存後
   const handleSaved = () => {
     onEventCreated();
     setMode('schedule');
   };
 
+  // 編集保存後
+  const handleEditSaved = () => {
+    onEventCreated(); // refreshKey++ で再取得
+    setMode('schedule');
+    setEventToEdit(null);
+  };
+
+  const handleEditCancel = () => {
+    setMode('schedule');
+    setEventToEdit(null);
+  };
+
   const handleDeleteRequest = (event: Event) => {
     setEventToDelete(event);
+  };
+
+  const handleEditRequest = (event: Event) => {
+    setSwipedEventId(null);
+    setEventToEdit(event);
+    setMode('edit');
   };
 
   const handleDeleteCancel = () => {
@@ -90,9 +109,6 @@ export default function DayModal({
     setIsDeleting(true);
     try {
       const [y, m] = eventToDelete.start_date.split('-');
-      // 論理削除（deleted = TRUE）。物理削除はしない。
-      // 将来的に「最近削除した予定」画面を実装し、
-      // deleted = TRUE の予定を復元可能にする予定。
       const res = await apiFetch(
         `/api/events/${eventToDelete.id}?year=${y}&month=${m}`,
         { method: 'DELETE' },
@@ -109,9 +125,21 @@ export default function DayModal({
     }
   };
 
-  const canSwipe = (event: Event) => currentRole !== null && event.owner === currentRole;
+  const canAction = (event: Event) => currentRole !== null && event.owner === currentRole;
+
+  const handleSwipeLeft = (id: string) => {
+    setSwipedEventId(id);
+    setSwipedDirection('left');
+  };
+
+  const handleSwipeRight = (id: string) => {
+    setSwipedEventId(id);
+    setSwipedDirection('right');
+  };
 
   const backdropClickable = mode === 'schedule' && eventToDelete === null;
+
+  const containerHeight = mode === 'schedule' ? 'max-h-[90dvh]' : 'h-[90dvh]';
 
   return (
     <>
@@ -122,16 +150,20 @@ export default function DayModal({
         aria-hidden="true"
       />
 
-      {/* create モード: h-[90dvh] で固定（フォームが flex-1 で埋められるように）
-          schedule モード: max-h-[90dvh] でコンテンツ量に応じて可変 */}
-      <div className={`fixed inset-x-0 bottom-0 z-50 flex flex-col bg-white rounded-t-2xl ${
-        mode === 'create' ? 'h-[90dvh]' : 'max-h-[90dvh]'
-      }`}>
+      <div className={`fixed inset-x-0 bottom-0 z-50 flex flex-col bg-white rounded-t-2xl ${containerHeight}`}>
         {mode === 'create' ? (
           <EventCreateForm
             dateStr={dateStr}
             onSaved={handleSaved}
             onCancel={() => setMode('schedule')}
+          />
+        ) : mode === 'edit' && eventToEdit ? (
+          <EventCreateForm
+            dateStr={eventToEdit.start_date}
+            mode="edit"
+            initialEvent={eventToEdit}
+            onSaved={handleEditSaved}
+            onCancel={handleEditCancel}
           />
         ) : (
           <>
@@ -156,7 +188,7 @@ export default function DayModal({
               </button>
             </div>
 
-            {/* Event list — overflow-y-auto makes min-height 0 so container shrinks/scrolls correctly */}
+            {/* Event list */}
             <div className="overflow-y-auto pb-8">
               {dayEvents.length === 0 ? (
                 <div className="px-4 py-10 text-center">
@@ -164,7 +196,6 @@ export default function DayModal({
                 </div>
               ) : (
                 <>
-                  {/* 終日・複数日 */}
                   {allDaySection.length > 0 && (
                     <div className="px-4 pt-3 pb-3 border-b border-zinc-100">
                       <p className="text-[10px] font-medium text-zinc-400 mb-2">終日・複数日</p>
@@ -175,17 +206,19 @@ export default function DayModal({
                             event={e}
                             showTime={false}
                             isSwiped={swipedEventId === e.id}
-                            canDelete={canSwipe(e)}
-                            onSwipe={() => setSwipedEventId(e.id)}
+                            swipeDir={swipedEventId === e.id ? swipedDirection : 'left'}
+                            canAction={canAction(e)}
+                            onSwipeLeft={() => handleSwipeLeft(e.id)}
+                            onSwipeRight={() => handleSwipeRight(e.id)}
                             onCloseSwipe={() => setSwipedEventId(null)}
                             onDeleteRequest={handleDeleteRequest}
+                            onEditRequest={handleEditRequest}
                           />
                         ))}
                       </div>
                     </div>
                   )}
 
-                  {/* 時刻付き予定 */}
                   {timedSection.length > 0 && (
                     <div className="px-4 pt-3 pb-1 flex flex-col gap-2">
                       {timedSection.map((e) => (
@@ -194,10 +227,13 @@ export default function DayModal({
                           event={e}
                           showTime
                           isSwiped={swipedEventId === e.id}
-                          canDelete={canSwipe(e)}
-                          onSwipe={() => setSwipedEventId(e.id)}
+                          swipeDir={swipedEventId === e.id ? swipedDirection : 'left'}
+                          canAction={canAction(e)}
+                          onSwipeLeft={() => handleSwipeLeft(e.id)}
+                          onSwipeRight={() => handleSwipeRight(e.id)}
                           onCloseSwipe={() => setSwipedEventId(null)}
                           onDeleteRequest={handleDeleteRequest}
+                          onEditRequest={handleEditRequest}
                         />
                       ))}
                     </div>
@@ -209,7 +245,7 @@ export default function DayModal({
         )}
       </div>
 
-      {/* Delete confirmation */}
+      {/* Delete confirmation (z-[60]/z-[70] — above DayModal sheet) */}
       {eventToDelete && (
         <DeleteConfirmModal
           event={eventToDelete}
@@ -223,25 +259,33 @@ export default function DayModal({
 }
 
 // ---- SwipeableEventCard ----
+// 左スワイプ → 赤い削除ボタン表示
+// 右スワイプ → 青い編集ボタン表示（タップで編集フォームを開く）
 
 interface SwipeableProps {
   event: Event;
   showTime: boolean;
   isSwiped: boolean;
-  canDelete: boolean;
-  onSwipe: () => void;
+  swipeDir: 'left' | 'right';
+  canAction: boolean;
+  onSwipeLeft: () => void;
+  onSwipeRight: () => void;
   onCloseSwipe: () => void;
   onDeleteRequest: (event: Event) => void;
+  onEditRequest: (event: Event) => void;
 }
 
 function SwipeableEventCard({
   event,
   showTime,
   isSwiped,
-  canDelete,
-  onSwipe,
+  swipeDir,
+  canAction,
+  onSwipeLeft,
+  onSwipeRight,
   onCloseSwipe,
   onDeleteRequest,
+  onEditRequest,
 }: SwipeableProps) {
   const touchStartX = useRef<number | null>(null);
 
@@ -253,20 +297,49 @@ function SwipeableEventCard({
     if (touchStartX.current === null) return;
     const dx = e.changedTouches[0].clientX - touchStartX.current;
     touchStartX.current = null;
-    if (canDelete && dx < -40) {
-      onSwipe();
-    } else if (dx > 20) {
+
+    // スワイプ中なら閉じる
+    if (isSwiped) {
       onCloseSwipe();
+      return;
+    }
+    if (!canAction) return;
+
+    if (dx < -40) {
+      onSwipeLeft();   // 左スワイプ → 削除ボタン
+    } else if (dx > 40) {
+      onSwipeRight();  // 右スワイプ → 編集ボタン
     }
   };
 
+  const offset = isSwiped
+    ? swipeDir === 'right' ? ACTION_BTN_WIDTH : -ACTION_BTN_WIDTH
+    : 0;
+
   return (
     <div className="relative overflow-hidden rounded-xl">
-      {/* Delete button */}
-      {canDelete && (
+      {/* 編集ボタン（左側・青） — 右スワイプで出現 */}
+      {canAction && (
+        <div
+          className="absolute left-0 top-0 bottom-0 flex items-center justify-center bg-blue-500"
+          style={{ width: ACTION_BTN_WIDTH }}
+        >
+          <button
+            type="button"
+            onClick={() => onEditRequest(event)}
+            className="flex items-center justify-center w-full h-full"
+            aria-label="編集"
+          >
+            <Pencil size={20} stroke="white" strokeWidth={2} />
+          </button>
+        </div>
+      )}
+
+      {/* 削除ボタン（右側・赤） — 左スワイプで出現 */}
+      {canAction && (
         <div
           className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500"
-          style={{ width: DELETE_BTN_WIDTH }}
+          style={{ width: ACTION_BTN_WIDTH }}
         >
           <button
             type="button"
@@ -279,21 +352,16 @@ function SwipeableEventCard({
         </div>
       )}
 
-      {/* Event card (slides left to reveal delete) */}
+      {/* イベントカード（スライドして左右のボタンを露出） */}
       <div
         style={{
-          transform: isSwiped ? `translateX(-${DELETE_BTN_WIDTH}px)` : 'translateX(0)',
+          transform: `translateX(${offset}px)`,
           transition: 'transform 0.2s ease-out',
         }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        <EventCard
-          event={event}
-          showTime={showTime}
-          canDelete={canDelete}
-          onDeleteRequest={() => onDeleteRequest(event)}
-        />
+        <EventCard event={event} showTime={showTime} />
       </div>
     </div>
   );
@@ -304,13 +372,10 @@ function SwipeableEventCard({
 interface EventCardProps {
   event: Event;
   showTime: boolean;
-  canDelete?: boolean;
-  onDeleteRequest?: () => void;
 }
 
-function EventCard({ event, showTime, canDelete, onDeleteRequest }: EventCardProps) {
+function EventCard({ event, showTime }: EventCardProps) {
   const color = FAMILY_COLORS[event.person];
-  // ラスト条件を満たす場合は「09:00〜ラスト」のように表示
   const timeLabel = showTime ? formatEventTimeRange(event) : '';
 
   return (
@@ -321,7 +386,6 @@ function EventCard({ event, showTime, canDelete, onDeleteRequest }: EventCardPro
       {timeLabel && (
         <p className="text-xs font-medium text-zinc-500 mb-1.5 tabular-nums">{timeLabel}</p>
       )}
-      {/* person + title + delete icon */}
       <div className="flex items-start gap-1">
         <div className="flex items-baseline gap-1.5 flex-1 min-w-0">
           <span style={{ color: color.main }} className="text-xs font-bold shrink-0">
@@ -329,16 +393,6 @@ function EventCard({ event, showTime, canDelete, onDeleteRequest }: EventCardPro
           </span>
           <span className="text-sm font-semibold text-zinc-900 leading-snug">{event.title}</span>
         </div>
-        {canDelete && onDeleteRequest && (
-          <button
-            type="button"
-            onClick={onDeleteRequest}
-            aria-label="削除"
-            className="shrink-0 p-0.5 -mt-0.5 text-zinc-300 hover:text-red-400 active:text-red-500"
-          >
-            <Trash2 size={15} strokeWidth={2} />
-          </button>
-        )}
       </div>
       {event.location && (
         <p className="flex items-center gap-0.5 text-xs text-zinc-500 mt-1 truncate">
