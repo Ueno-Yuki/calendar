@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { CalendarDays, Clock, MapPin, FileText, ToggleLeft, ToggleRight, BellOff } from 'lucide-react';
+import { CalendarDays, Clock, MapPin, FileText, ToggleLeft, ToggleRight, BellOff, X } from 'lucide-react';
 import type { EventTemplate, FamilyRole } from '@/types';
 import { apiFetch } from '@/lib/apiClient';
 import { STORAGE_KEY } from '@/lib/auth';
@@ -112,6 +112,12 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
     }, 300);
     return () => clearTimeout(timer);
   }, [title, currentRole]);
+
+  const handleDeleteTemplate = (id: string) => {
+    // 楽観的UI更新: 即座にリストから除去してからAPIを呼ぶ
+    setSuggestions((prev) => prev.filter((s) => s.id !== id));
+    apiFetch(`/api/event-suggestions/${id}`, { method: 'DELETE' }).catch(() => {});
+  };
 
   const applyTemplate = (template: EventTemplate) => {
     if (template.start_time) setStartTime(template.start_time);
@@ -259,19 +265,34 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
                   ? displayEnd ? `${s.start_time}〜${displayEnd}` : s.start_time
                   : '';
                 return (
-                  <button
+                  <div
                     key={s.id}
-                    type="button"
-                    onPointerDown={(e) => e.preventDefault()}
-                    onClick={() => applyTemplate(s)}
-                    className="w-full text-left px-3 py-2.5 hover:bg-zinc-50 border-b border-zinc-100 last:border-0 active:bg-zinc-100"
+                    className="flex items-center border-b border-zinc-100 last:border-0"
                   >
-                    <div className="flex items-center gap-2">
-                      <span style={{ color: color.main }} className="text-[10px] font-semibold shrink-0">{color.label}</span>
-                      <span className="text-sm text-zinc-900 truncate flex-1">{s.title}</span>
-                      {timeLabel && <span className="text-[10px] text-zinc-400 shrink-0">{timeLabel}</span>}
-                    </div>
-                  </button>
+                    {/* 候補適用ボタン */}
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.preventDefault()}
+                      onClick={() => applyTemplate(s)}
+                      className="flex-1 text-left px-3 py-2.5 hover:bg-zinc-50 active:bg-zinc-100 min-w-0"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span style={{ color: color.main }} className="text-[10px] font-semibold shrink-0">{color.label}</span>
+                        <span className="text-sm text-zinc-900 truncate flex-1">{s.title}</span>
+                        {timeLabel && <span className="text-[10px] text-zinc-400 shrink-0">{timeLabel}</span>}
+                      </div>
+                    </button>
+                    {/* 候補削除ボタン */}
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.preventDefault()}
+                      onClick={() => handleDeleteTemplate(s.id)}
+                      aria-label="候補を削除"
+                      className="flex items-center justify-center h-11 w-11 shrink-0 text-red-400 active:text-red-600"
+                    >
+                      <X size={15} strokeWidth={2.5} />
+                    </button>
+                  </div>
                 );
               })}
             </div>

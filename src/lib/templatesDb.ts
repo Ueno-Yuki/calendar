@@ -81,6 +81,28 @@ export async function getTemplateSuggestions(
 }
 
 /**
+ * 指定 id のテンプレートを論理削除する。
+ * person が requesterRole と一致しない場合は 'forbidden' を返す。
+ */
+export async function deleteTemplate(
+  id: string,
+  requesterRole: FamilyRole,
+): Promise<'ok' | 'not_found' | 'forbidden'> {
+  await ensureTemplateSheet();
+  const rows = await getRows(TEMPLATE_SHEET_NAME);
+  const idx = rows.findIndex((r) => r.id === id && r.deleted !== 'TRUE');
+  if (idx === -1) return 'not_found';
+
+  const template = parseTemplateRow(rows[idx]);
+  if (template.person !== requesterRole) return 'forbidden';
+
+  const now = new Date().toISOString();
+  const deleted: EventTemplate = { ...template, deleted: true, updated_at: now };
+  await updateRow(TEMPLATE_SHEET_NAME, idx, templateToValues(deleted));
+  return 'ok';
+}
+
+/**
  * 予定登録時にテンプレートを upsert する。
  * キー: person + title + start_time + end_time
  * - 存在する場合: usage_count++、last_used_at/location/memo を更新
