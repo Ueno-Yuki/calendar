@@ -209,8 +209,8 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="予定のタイトル"
-            style={{ fontSize: 20 }}
-            className="w-full font-medium text-zinc-900 placeholder-zinc-300 bg-transparent focus:outline-none"
+            style={{ fontSize: 22 }}
+            className="w-full font-semibold text-zinc-900 placeholder-zinc-400 bg-transparent focus:outline-none"
           />
           {showSuggestions && (
             <div className="absolute z-10 left-4 right-4 top-full mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
@@ -245,14 +245,14 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         {/* リスト行 */}
 
         {/* カレンダー（表示のみ） */}
-        <ListRow icon={<CalendarDays size={18} />}>
+        <ListRow icon={<CalendarDays size={18} className="text-green-500" />}>
           <span className="text-sm text-zinc-400">家族カレンダー</span>
         </ListRow>
 
         {/* 終日トグル */}
         <ListRow icon={allDay
-          ? <ToggleRight size={18} className="text-zinc-700" />
-          : <ToggleLeft size={18} />
+          ? <ToggleRight size={18} className="text-orange-500" />
+          : <ToggleLeft size={18} className="text-orange-400" />
         }>
           <div className="flex items-center justify-between">
             <span className="text-sm text-zinc-700">終日</span>
@@ -275,62 +275,66 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         </ListRow>
 
         {/* 開始 */}
-        <ListRow icon={<Clock size={18} />}>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-zinc-500 shrink-0 w-8">開始</span>
-            <DateButton value={startDate} onChange={handleStartDateChange} label="開始日" />
-            {!allDay && (
-              <TimeSelect
-                hour={startHour}
-                minute={startMinute}
-                onHourChange={setStartHour}
-                onMinuteChange={setStartMinute}
-              />
-            )}
+        <ListRow icon={<Clock size={18} className="text-blue-500" />}>
+          <div className="flex items-center">
+            <span className="text-sm text-zinc-500 shrink-0">開始</span>
+            <div className="ml-auto flex items-center gap-2">
+              <DateButton value={startDate} onChange={handleStartDateChange} label="開始日" />
+              {!allDay && (
+                <TimeSelect
+                  hour={startHour}
+                  minute={startMinute}
+                  onHourChange={setStartHour}
+                  onMinuteChange={setStartMinute}
+                />
+              )}
+            </div>
           </div>
         </ListRow>
 
         {/* 終了（アイコンなし — 開始行の続き） */}
         <ListRow>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-zinc-500 shrink-0 w-8">終了</span>
-            <DateButton value={endDate} min={startDate} onChange={setEndDate} label="終了日" />
-            {!allDay && (
-              isLast ? (
-                /* ラスト選択中 — ダークボタンをタップで解除 */
-                <button
-                  type="button"
-                  onClick={() => setIsLast(false)}
-                  className="shrink-0 h-9 px-3 rounded-lg bg-zinc-800 text-sm text-white font-medium"
-                >
-                  ラスト
-                </button>
-              ) : (
-                <>
-                  <TimeSelect
-                    hour={endHour}
-                    minute={endMinute}
-                    onHourChange={setEndHour}
-                    onMinuteChange={setEndMinute}
-                  />
-                  {/* 母 + かっぱタイトルのときのみ「ラスト」ボタンを表示 */}
-                  {showLastOption && (
-                    <button
-                      type="button"
-                      onClick={() => setIsLast(true)}
-                      className="shrink-0 h-9 px-2.5 rounded-lg bg-zinc-100 text-sm text-zinc-500 active:bg-zinc-200"
-                    >
-                      ラスト
-                    </button>
-                  )}
-                </>
-              )
-            )}
+          <div className="flex items-center">
+            <span className="text-sm text-zinc-500 shrink-0">終了</span>
+            <div className="ml-auto flex items-center gap-2">
+              <DateButton value={endDate} min={startDate} onChange={setEndDate} label="終了日" />
+              {!allDay && (
+                isLast ? (
+                  /* ラスト選択中 — ダークボタンをタップで解除 */
+                  <button
+                    type="button"
+                    onClick={() => setIsLast(false)}
+                    className="shrink-0 h-9 px-3 rounded-lg bg-zinc-800 text-sm text-white font-medium"
+                  >
+                    ラスト
+                  </button>
+                ) : (
+                  <>
+                    <TimeSelect
+                      hour={endHour}
+                      minute={endMinute}
+                      onHourChange={setEndHour}
+                      onMinuteChange={setEndMinute}
+                    />
+                    {/* 母 + かっぱタイトルのときのみ「ラスト」ボタンを表示 */}
+                    {showLastOption && (
+                      <button
+                        type="button"
+                        onClick={() => setIsLast(true)}
+                        className="shrink-0 h-9 px-2.5 rounded-lg bg-zinc-100 text-sm text-zinc-500 active:bg-zinc-200"
+                      >
+                        ラスト
+                      </button>
+                    )}
+                  </>
+                )
+              )}
+            </div>
           </div>
         </ListRow>
 
         {/* 場所 */}
-        <ListRow icon={<MapPin size={18} />}>
+        <ListRow icon={<MapPin size={18} className="text-red-500" />}>
           <input
             type="text"
             value={location}
@@ -342,7 +346,7 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         </ListRow>
 
         {/* メモ */}
-        <ListRow icon={<FileText size={18} />} alignTop>
+        <ListRow icon={<FileText size={18} className="text-purple-500" />} alignTop>
           <textarea
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
@@ -401,7 +405,7 @@ function DateButton({ value, onChange, min, label }: DateButtonProps) {
     <div className="relative shrink-0">
       {/* 表示層 */}
       <div
-        className="flex items-center h-9 px-2.5 bg-zinc-100 rounded-lg pointer-events-none select-none"
+        className="flex items-center justify-center h-9 px-2.5 bg-zinc-100 rounded-lg pointer-events-none select-none"
         aria-hidden="true"
       >
         <span className="text-sm text-zinc-900 whitespace-nowrap leading-none">
@@ -435,12 +439,12 @@ interface TimeSelectProps {
 
 function TimeSelect({ hour, minute, onHourChange, onMinuteChange }: TimeSelectProps) {
   return (
-    <div className="shrink-0 flex items-center h-9 bg-zinc-100 rounded-lg px-2 gap-px">
+    <div className="shrink-0 flex items-center h-9 bg-zinc-100 rounded-lg px-3 gap-0">
       <select
         value={hour}
         onChange={(e) => onHourChange(Number(e.target.value))}
         style={{ fontSize: 16 }}
-        className="h-full w-8 bg-transparent text-zinc-900 appearance-none text-center focus:outline-none"
+        className="h-full w-6 bg-transparent text-zinc-900 appearance-none text-center focus:outline-none"
       >
         {HOUR_LIST.map((h) => (
           <option key={h} value={h}>{pad2(h)}</option>
@@ -451,7 +455,7 @@ function TimeSelect({ hour, minute, onHourChange, onMinuteChange }: TimeSelectPr
         value={minute}
         onChange={(e) => onMinuteChange(Number(e.target.value))}
         style={{ fontSize: 16 }}
-        className="h-full w-8 bg-transparent text-zinc-900 appearance-none text-center focus:outline-none"
+        className="h-full w-6 bg-transparent text-zinc-900 appearance-none text-center focus:outline-none"
       >
         {MINUTE_LIST.map((m) => (
           <option key={m} value={m}>{pad2(m)}</option>
