@@ -4,11 +4,12 @@ import { getCurrentUser, AuthError } from '@/lib/auth';
 import { getRows, appendRow, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
 import { parseEventRow, eventToValues } from '@/lib/eventsDb';
 import { upsertTemplate } from '@/lib/templatesDb';
+import { getSyncMeta } from '@/lib/syncMetaDb';
+import { createGCalEvent } from '@/lib/googleCalendar';
 
 // ---- 日付ユーティリティ ----
 
 function getLastDayOfMonth(year: number, month: number): string {
-  // new Date(year, month, 0) → month は 1-indexed; day 0 = 前月末日
   const d = new Date(year, month, 0);
   return `${year}-${String(month).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -81,6 +82,12 @@ function validateEventBody(
 }
 
 // ---- GET /api/events?year=YYYY&month=MM ----
+// Google同期は実行しない。Sheetsの予定を即返す。
+// sync.googleSyncRecommended: 最終同期から10分以上経過している場合 true。
+// クライアントが true を受け取った場合に POST /api/sync/google をバックグラウンド実行する。
+
+const SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const LAST_SYNCED_KEY = 'mother_google_calendar_last_synced_at';
 
 export async function GET(request: NextRequest) {
   try {
@@ -101,17 +108,16 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // 当月シートが存在しなければ作成
     await ensureMonthSheet(year, month);
 
     const currentSheetName = getMonthSheetName(year, month);
     const prev = getPrevMonth(year, month);
     const prevSheetName = getMonthSheetName(prev.year, prev.month);
 
-    // 当月 + 前月の 2 シートを取得（前月シート不在は空配列）
-    const [currentRows, prevRows] = await Promise.all([
+    const [currentRows, prevRows, lastSyncedAt] = await Promise.all([
       getRows(currentSheetName),
       getRows(prevSheetName),
+      getSyncMeta(LAST_SYNCED_KEY),
     ]);
 
     const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;
@@ -122,13 +128,24 @@ export async function GET(request: NextRequest) {
       .filter((r) => r.start_date <= lastDay && r.end_date >= firstDay)
       .map(parseEventRow);
 
-    return Response.json(events);
+    // 同期推奨判定: 最終同期から10分以上経過 または 未同期
+    const googleSyncRecommended = !lastSyncedAt ||
+      Date.now() - new Date(lastSyncedAt).getTime() >= SYNC_INTERVAL_MS;
+
+    return Response.json({
+      events,
+      sync: {
+        googleSyncRecommended,
+        lastSyncedAt: lastSyncedAt ?? null,
+      },
+    });
   } catch {
     return Response.json({ error: 'データ取得に失敗しました' }, { status: 500 });
   }
 }
 
 // ---- POST /api/events ----
+// 母の予定の場合、Google Calendarにも登録して google_event_id を保存する。
 
 export async function POST(request: NextRequest) {
   let currentUser: ReturnType<typeof getCurrentUser>;
@@ -177,14 +194,20 @@ export async function POST(request: NextRequest) {
       deleted: false,
     };
 
-    // start_date のシートに保存
+    // 母の予定のみ Google Calendar にも登録
+    if (currentUser.role === 'mother') {
+      const googleEventId = await createGCalEvent(event).catch(() => null);
+      if (googleEventId) {
+        event.google_event_id = googleEventId;
+      }
+    }
+
     const [startYearStr, startMonthStr] = input.start_date.split('-');
     const startYear = parseInt(startYearStr);
     const startMonth = parseInt(startMonthStr);
     await ensureMonthSheet(startYear, startMonth);
     await appendRow(getMonthSheetName(startYear, startMonth), eventToValues(event));
 
-    // テンプレートを upsert（失敗してもイベント登録の成否に影響しない）
     upsertTemplate({
       person: event.person,
       title: event.title,

@@ -3,8 +3,9 @@ import type { Event } from '@/types';
 import { getCurrentUser, AuthError } from '@/lib/auth';
 import { updateRow } from '@/lib/sheets';
 import { findEventById, eventToValues } from '@/lib/eventsDb';
+import { deleteGCalEvent, updateGCalEvent } from '@/lib/googleCalendar';
 
-// ---- バリデーション（POST と同じロジックを共有する形で再定義）----
+// ---- バリデーション ----
 
 interface EventInput {
   title: string;
@@ -68,6 +69,7 @@ function validateEventBody(
 }
 
 // ---- PUT /api/events/[id]?year=YYYY&month=MM ----
+// 母の予定の場合、Google Calendar も更新する。
 
 export async function PUT(
   request: NextRequest,
@@ -85,7 +87,6 @@ export async function PUT(
 
   const { id } = await params;
 
-  // クライアントが year/month ヒントを渡すと検索が O(1) になる
   const sp = request.nextUrl.searchParams;
   const hintYear = parseInt(sp.get('year') ?? '') || undefined;
   const hintMonth = parseInt(sp.get('month') ?? '') || undefined;
@@ -126,6 +127,11 @@ export async function PUT(
       updated_at: new Date().toISOString(),
     };
 
+    // 母の予定のみ Google Calendar も更新（失敗してもSheets更新は継続）
+    if (found.event.owner === 'mother' && found.event.google_event_id) {
+      updateGCalEvent(found.event.google_event_id, updated).catch(() => {});
+    }
+
     await updateRow(found.sheetName, found.dataRowIndex, eventToValues(updated));
     return Response.json(updated);
   } catch {
@@ -134,6 +140,8 @@ export async function PUT(
 }
 
 // ---- DELETE /api/events/[id]?year=YYYY&month=MM ----
+// 母の予定の場合、Google Calendar からも削除する。
+// Sheets 側は論理削除（deleted = TRUE）。
 
 export async function DELETE(
   request: NextRequest,
@@ -163,6 +171,11 @@ export async function DELETE(
 
     if (found.event.owner !== currentUser.role) {
       return Response.json({ error: '他人の予定は削除できません' }, { status: 403 });
+    }
+
+    // 母の予定のみ Google Calendar からも削除（失敗してもSheets削除は継続）
+    if (found.event.owner === 'mother' && found.event.google_event_id) {
+      deleteGCalEvent(found.event.google_event_id).catch(() => {});
     }
 
     const deleted: Event = {
