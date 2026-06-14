@@ -7,6 +7,9 @@ import CalendarHeader from '@/components/calendar/CalendarHeader';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import DayModal from '@/components/modal/DayModal';
 import SettingsModal from '@/components/modal/SettingsModal';
+import NotificationPromptModal, {
+  NOTIFICATION_PROMPT_DISMISSED_KEY,
+} from '@/components/modal/NotificationPromptModal';
 
 interface EventsResponse {
   events: Event[];
@@ -33,6 +36,8 @@ export default function CalendarPage() {
   const [pendingDate, setPendingDate] = useState<string | null>(null);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
+  const notificationPromptCheckedRef = useRef(false);
 
   // Google同期UX状態
   const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
@@ -66,6 +71,36 @@ export default function CalendarPage() {
     setSelectedDate(pendingDate);
     setPendingDate(null);
   }, [pendingDate, loading]);
+
+  // 認証済み・初回ロード完了後に通知許可プロンプトを表示するか判定する。
+  // Notification.requestPermission() はユーザー操作（ボタンタップ）に紐づけて呼ぶため、ここでは表示判定のみ。
+  useEffect(() => {
+    if (loading || authError) return;
+    if (notificationPromptCheckedRef.current) return;
+    notificationPromptCheckedRef.current = true;
+
+    // 通知API・SW・PushManagerのブラウザ対応チェック
+    if (
+      !('Notification' in window) ||
+      !('serviceWorker' in navigator) ||
+      !('PushManager' in window) ||
+      Notification.permission !== 'default' ||
+      localStorage.getItem(NOTIFICATION_PROMPT_DISMISSED_KEY) === '1'
+    ) {
+      return;
+    }
+
+    // permission=default なら push 購読は存在しないが、仕様に従い明示確認する
+    navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sub) => {
+        if (!sub) setShowNotificationPrompt(true);
+      })
+      .catch(() => {
+        // SW 準備中などでエラーの場合もプロンプトを表示する
+        setShowNotificationPrompt(true);
+      });
+  }, [loading, authError]);
 
   const cacheRef = useRef<Record<string, Event[]>>({});
   const prevRefreshKeyRef = useRef(0);
@@ -223,6 +258,9 @@ export default function CalendarPage() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showNotificationPrompt && (
+        <NotificationPromptModal onClose={() => setShowNotificationPrompt(false)} />
+      )}
     </div>
   );
 }

@@ -72,6 +72,7 @@ export default function SettingsModal({ onClose }: Props) {
   const [settings, setSettings] = useState<NotificationSettings>(DEFAULT_SETTINGS);
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
   const [isSubscribing, setIsSubscribing] = useState(false);
+  const [justGranted, setJustGranted] = useState(false);
 
   useEffect(() => {
     const r = readCurrentRole();
@@ -102,9 +103,26 @@ export default function SettingsModal({ onClose }: Props) {
   const handleRequestPermission = async () => {
     setIsSubscribing(true);
     try {
-      await subscribePush();
-    } finally {
+      // requestPermission はユーザー操作に紐づけて呼ぶ（ここはボタンのonClick内）
+      const result = await Notification.requestPermission();
+      setPermission(result);
+      if (result === 'granted') {
+        await subscribePush().catch(() => {});
+        // 通知設定をONにする（デフォルト値だが明示的に保存）
+        apiFetch('/api/settings/notifications', {
+          method: 'PUT',
+          body: JSON.stringify({
+            notification_enabled: true,
+            daily_summary_enabled: true,
+            instant_event_created_enabled: true,
+            instant_event_deleted_enabled: true,
+          }),
+        }).catch(() => {});
+        setJustGranted(true);
+      }
+    } catch {
       setPermission(getNotificationPermission());
+    } finally {
       setIsSubscribing(false);
     }
   };
@@ -169,37 +187,73 @@ export default function SettingsModal({ onClose }: Props) {
               Push通知
             </p>
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {permission === 'granted' ? (
-                  <Bell size={16} className="text-green-500" />
-                ) : (
-                  <BellOff size={16} className="text-zinc-400" />
-                )}
-                <span className="text-sm text-zinc-700">
-                  {permission === 'granted' && '許可済み'}
-                  {permission === 'default' && '未許可'}
-                  {permission === 'denied' && 'ブロック中'}
-                  {permission === 'unsupported' && '非対応ブラウザ'}
-                </span>
+            {/* granted */}
+            {permission === 'granted' && (
+              <div className="flex items-start gap-3">
+                <Bell size={18} className="text-green-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-green-700">通知は許可されています</p>
+                  <p className="text-xs text-zinc-400 mt-0.5">この端末は通知を受信できます</p>
+                  {justGranted && (
+                    <p className="text-xs text-green-600 font-medium mt-1.5">通知を許可しました</p>
+                  )}
+                </div>
               </div>
+            )}
 
-              {permission === 'default' && (
+            {/* default — ボタンのonClick内でのみ requestPermission を呼ぶ */}
+            {permission === 'default' && (
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <BellOff size={16} className="text-zinc-400 shrink-0" />
+                  <span className="text-sm text-zinc-600">通知は未許可です</span>
+                </div>
                 <button
                   type="button"
                   disabled={isSubscribing}
                   onClick={handleRequestPermission}
-                  className="text-xs px-3 py-1.5 rounded-full bg-blue-500 text-white font-medium disabled:opacity-50"
+                  className="text-xs px-3 py-1.5 rounded-full bg-blue-500 text-white font-medium disabled:opacity-50 shrink-0"
                 >
                   {isSubscribing ? '処理中…' : '通知を許可する'}
                 </button>
-              )}
-            </div>
+              </div>
+            )}
 
+            {/* denied — ボタンは表示しない。端末設定の案内を表示する */}
             {permission === 'denied' && (
-              <p className="mt-2 text-xs text-zinc-400">
-                ブラウザの設定から通知の許可を変更してください。
-              </p>
+              <div>
+                <div className="flex items-start gap-3">
+                  <BellOff size={18} className="text-red-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-red-600">
+                      通知が端末側で拒否されています
+                    </p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      端末の設定から通知を許可してください。
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 rounded-xl bg-zinc-50 p-3 space-y-2">
+                  <p className="text-xs text-zinc-500">
+                    <span className="font-medium text-zinc-600">iPhoneの場合：</span>
+                    ホーム画面アプリまたはSafariの通知設定から許可してください。
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    <span className="font-medium text-zinc-600">Androidの場合：</span>
+                    ブラウザまたはPWAのサイト設定から通知を許可してください。
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* unsupported */}
+            {permission === 'unsupported' && (
+              <div className="flex items-center gap-2">
+                <BellOff size={16} className="text-zinc-400" />
+                <span className="text-sm text-zinc-400">
+                  このブラウザは通知に対応していません
+                </span>
+              </div>
             )}
           </section>
 
