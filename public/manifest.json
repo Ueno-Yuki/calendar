@@ -1,0 +1,19 @@
+{
+  "name": "家族カレンダー",
+  "short_name": "家族カレンダー",
+  "description": "家族の予定を共有するカレンダーアプリ",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- 背景 -->
+  <rect width="512" height="512" rx="96" fill="#EC4899"/>
+  <!-- カレンダー本体 -->
+  <rect x="80" y="128" width="352" height="304" rx="24" fill="white"/>
+  <!-- ヘッダー帯 -->
+  <rect x="80" y="128" width="352" height="96" rx="24" fill="#EC4899"/>
+  <rect x="80" y="176" width="352" height="48" fill="#EC4899"/>
+  <!-- リング（左） -->
+  <rect x="160" y="80" width="40" height="96" rx="20" fill="#BE185D"/>
+  <!-- リング（右） -->
+  <rect x="312" y="80" width="40" height="96" rx="20" fill="#BE185D"/>
+  <!-- カレンダーグリッド（ドット） -->
+  <circle cx="152" cy="296" r="18" fill="#EC4899"/>
+  <circle cx="256" cy="296" r="18" fill="#EC4899"/>
+  <circle cx="360" cy="296" r="18" fill="#EC4899"/>
+  <circle cx="152" cy="360" r="18" fill="#EC4899"/>
+  <circle cx="256" cy="360" r="18" fill="#EC4899"/>
+  <circle cx="360" cy="360" r="18" fill="#FCE7F3"/>
+</svg>
