@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import type { FamilyRole } from '@/types';
 
 export const STORAGE_KEY = 'family_calendar_user';
+export const COOKIE_NAME = 'family_calendar_user';
 
 export const VALID_ROLES: FamilyRole[] = ['mother', 'father', 'me', 'brother'];
 
@@ -37,24 +38,35 @@ export class AuthError extends Error {
 
 /**
  * APIリクエストから現在のユーザーを識別する。
- * クライアントは Authorization: Bearer <token> と X-Family-Role: <role> を送信する。
+ * 1. Authorization: Bearer <token> + X-Family-Role: <role> ヘッダー
+ * 2. Cookie family_calendar_user（PWAホーム画面からのアクセス時フォールバック）
  * 検証失敗時は AuthError をスローする。
  */
 export function getCurrentUser(request: NextRequest): { role: FamilyRole } {
+  // 1. ヘッダー認証
   const authHeader = request.headers.get('authorization');
   const roleHeader = request.headers.get('x-family-role');
 
-  if (!authHeader || !roleHeader) {
-    throw new AuthError('Missing credentials');
+  if (authHeader && roleHeader) {
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (token && isValidRole(roleHeader) && validateToken(roleHeader, token)) {
+      return { role: roleHeader };
+    }
   }
 
-  const token = authHeader.startsWith('Bearer ')
-    ? authHeader.slice(7)
-    : null;
+  // 2. Cookie 認証
+  const cookieRaw = request.cookies.get(COOKIE_NAME)?.value;
+  if (cookieRaw) {
+    const decoded = decodeURIComponent(cookieRaw);
+    const idx = decoded.indexOf(':');
+    if (idx > 0) {
+      const role = decoded.slice(0, idx);
+      const token = decoded.slice(idx + 1);
+      if (isValidRole(role) && validateToken(role, token)) {
+        return { role };
+      }
+    }
+  }
 
-  if (!token) throw new AuthError('Invalid Authorization header');
-  if (!isValidRole(roleHeader)) throw new AuthError('Invalid role');
-  if (!validateToken(roleHeader, token)) throw new AuthError('Invalid token');
-
-  return { role: roleHeader };
+  throw new AuthError('Missing credentials');
 }
