@@ -1,4 +1,4 @@
-import { appendRow, ensureSheet } from '@/lib/sheets';
+import { getRows, appendRow, ensureSheet } from '@/lib/sheets';
 
 const SHEET = 'notification_logs';
 const HEADERS = [
@@ -15,6 +15,22 @@ export interface NotificationLogEntry {
   sent_at: string;
   status: 'sent' | 'failed' | 'skipped';
   error_message: string;
+}
+
+/**
+ * 指定日・ユーザーへの daily_summary が既に sent 状態で記録されているか確認する。
+ * sent がある = 重複送信を防ぐ。failed / skipped は再送候補として扱う。
+ */
+export async function hasDailySummarySent(date: string, userId: string): Promise<boolean> {
+  await ensureSheet(SHEET, HEADERS);
+  const rows = await getRows(SHEET);
+  return rows.some(
+    (r) =>
+      r.type === 'daily_summary' &&
+      r.date === date &&
+      r.target_user_id === userId &&
+      r.status === 'sent',
+  );
 }
 
 export async function appendNotificationLog(entry: NotificationLogEntry): Promise<void> {
