@@ -120,8 +120,11 @@ export default function DayModal({
         aria-hidden="true"
       />
 
-      {/* Bottom sheet — content-sized, capped at 90dvh */}
-      <div className="fixed inset-x-0 bottom-0 z-50 flex flex-col bg-white rounded-t-2xl max-h-[90dvh]">
+      {/* create モード: h-[90dvh] で固定（フォームが flex-1 で埋められるように）
+          schedule モード: max-h-[90dvh] でコンテンツ量に応じて可変 */}
+      <div className={`fixed inset-x-0 bottom-0 z-50 flex flex-col bg-white rounded-t-2xl ${
+        mode === 'create' ? 'h-[90dvh]' : 'max-h-[90dvh]'
+      }`}>
         {mode === 'create' ? (
           <EventCreateForm
             dateStr={dateStr}

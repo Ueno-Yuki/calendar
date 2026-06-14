@@ -9,6 +9,7 @@ import { FAMILY_COLORS } from '@/lib/colors';
 
 const HOUR_LIST = Array.from({ length: 24 }, (_, i) => i);
 const MINUTE_LIST = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+const DOW_JA = ['日', '月', '火', '水', '木', '金', '土'];
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -19,6 +20,12 @@ function roundTo5Min(date: Date): { hour: number; minute: number } {
   const rounded = Math.ceil(m / 5) * 5;
   if (rounded >= 60) return { hour: (date.getHours() + 1) % 24, minute: 0 };
   return { hour: date.getHours(), minute: rounded };
+}
+
+function formatDate(dateStr: string): string {
+  if (!dateStr) return '日付を選択';
+  const d = new Date(`${dateStr}T00:00:00`);
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日(${DOW_JA[d.getDay()]})`;
 }
 
 function readCurrentRole(): FamilyRole | null {
@@ -50,7 +57,6 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
   const [allDay, setAllDay] = useState(false);
   const [startHour, setStartHour] = useState(initHour);
   const [startMinute, setStartMinute] = useState(initMin);
-  const [hasEndTime, setHasEndTime] = useState(true);
   const [endHour, setEndHour] = useState(initEndHour);
   const [endMinute, setEndMinute] = useState(initMin);
   const [location, setLocation] = useState('');
@@ -71,9 +77,7 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         const params = new URLSearchParams({ title: query });
         if (currentRole) params.set('person', currentRole);
         const res = await apiFetch(`/api/event-suggestions?${params.toString()}`);
-        if (res.ok) {
-          setSuggestions((await res.json()) as EventTemplate[]);
-        }
+        if (res.ok) setSuggestions((await res.json()) as EventTemplate[]);
       } catch {
         setSuggestions([]);
       }
@@ -91,9 +95,6 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
       const [h, m] = template.end_time.split(':').map(Number);
       setEndHour(h);
       setEndMinute(m);
-      setHasEndTime(true);
-    } else {
-      setHasEndTime(false);
     }
     setLocation(template.location);
     setMemo(template.memo);
@@ -107,12 +108,11 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
     if (!endDate) errs.push('終了日を入力してください');
     if (startDate && endDate && endDate < startDate)
       errs.push('終了日は開始日以降を指定してください');
-    // 終日OFFの場合は開始時間必須（UIでは常に設定されるが仕様上明示チェック）
-    if (!allDay && (startHour == null || startMinute == null)) {
+    // 終日OFFの場合は開始時間必須
+    if (!allDay && (startHour == null || startMinute == null))
       errs.push('開始時間を入力してください');
-    }
-    if (!allDay && hasEndTime && startDate === endDate) {
-      if (endHour * 60 + endMinute < startHour * 60 + startMinute)
+    if (!allDay && startDate === endDate) {
+      if (endHour * 60 + endMinute <= startHour * 60 + startMinute)
         errs.push('終了時間は開始時間より後を指定してください');
     }
     return errs;
@@ -133,7 +133,7 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         end_date: endDate,
         all_day: allDay,
         start_time: allDay ? '' : `${pad2(startHour)}:${pad2(startMinute)}`,
-        end_time: allDay || !hasEndTime ? '' : `${pad2(endHour)}:${pad2(endMinute)}`,
+        end_time: allDay ? '' : `${pad2(endHour)}:${pad2(endMinute)}`,
         location,
         memo,
       };
@@ -163,13 +163,13 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Form header */}
+      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 shrink-0">
         <button
           type="button"
           onClick={onCancel}
           disabled={submitting}
-          className="text-sm text-zinc-500 hover:text-zinc-700 px-1"
+          className="h-11 flex items-center text-sm text-zinc-500 hover:text-zinc-700 px-1"
         >
           キャンセル
         </button>
@@ -178,7 +178,7 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
           type="button"
           onClick={handleSave}
           disabled={submitting}
-          className="text-sm font-semibold text-zinc-900 hover:text-zinc-600 disabled:opacity-50 px-1"
+          className="h-11 flex items-center text-sm font-semibold text-zinc-900 hover:text-zinc-600 disabled:opacity-50 px-1"
         >
           {submitting ? '保存中…' : '保存'}
         </button>
@@ -208,9 +208,8 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="予定のタイトル"
-              className="w-full border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-300"
+              className="w-full h-11 border border-zinc-200 rounded-xl px-3 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-300"
             />
-            {/* Suggestions dropdown */}
             {showSuggestions && (
               <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
                 {suggestions.map((s) => {
@@ -224,8 +223,6 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
                     <button
                       key={s.id}
                       type="button"
-                      // onPointerDown で preventDefault することでタイトル input の focus を保持し
-                      // onClick が確実に発火するようにする
                       onPointerDown={(e) => e.preventDefault()}
                       onClick={() => applyTemplate(s)}
                       className="w-full text-left px-3 py-2.5 hover:bg-zinc-50 border-b border-zinc-100 last:border-0"
@@ -275,117 +272,37 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
           </button>
         </div>
 
-        {/* Dates */}
-        <div className="flex gap-3">
-          <div className="flex-1 flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-zinc-500">
-              開始日 <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => handleStartDateChange(e.target.value)}
-              className="border border-zinc-200 rounded-xl px-2.5 py-2.5 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-300 w-full"
-            />
-          </div>
-          <div className="flex-1 flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-zinc-500">
-              終了日 <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="date"
-              value={endDate}
-              min={startDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="border border-zinc-200 rounded-xl px-2.5 py-2.5 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-300 w-full"
-            />
+        {/* Start row: date + time (if !allDay) */}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium text-zinc-500">開始</span>
+          <div className="flex items-center gap-2">
+            <DateButton value={startDate} onChange={handleStartDateChange} label="開始日" />
+            {!allDay && (
+              <TimeSelect
+                hour={startHour}
+                minute={startMinute}
+                onHourChange={setStartHour}
+                onMinuteChange={setStartMinute}
+              />
+            )}
           </div>
         </div>
 
-        {/* Time inputs (hidden when all-day) */}
-        {!allDay && (
-          <>
-            {/* Start time */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-zinc-500">
-                開始時間 <span className="text-red-500">*</span>
-              </label>
-              <div className="flex items-center gap-2">
-                <select
-                  value={startHour}
-                  onChange={(e) => setStartHour(Number(e.target.value))}
-                  className="border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-300 bg-white"
-                >
-                  {HOUR_LIST.map((h) => (
-                    <option key={h} value={h}>
-                      {pad2(h)}
-                    </option>
-                  ))}
-                </select>
-                <span className="text-zinc-400 font-medium">:</span>
-                <select
-                  value={startMinute}
-                  onChange={(e) => setStartMinute(Number(e.target.value))}
-                  className="border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-300 bg-white"
-                >
-                  {MINUTE_LIST.map((m) => (
-                    <option key={m} value={m}>
-                      {pad2(m)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* End time */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-zinc-500">終了時間</label>
-              {hasEndTime ? (
-                <div className="flex items-center gap-2">
-                  <select
-                    value={endHour}
-                    onChange={(e) => setEndHour(Number(e.target.value))}
-                    className="border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-300 bg-white"
-                  >
-                    {HOUR_LIST.map((h) => (
-                      <option key={h} value={h}>
-                        {pad2(h)}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-zinc-400 font-medium">:</span>
-                  <select
-                    value={endMinute}
-                    onChange={(e) => setEndMinute(Number(e.target.value))}
-                    className="border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-300 bg-white"
-                  >
-                    {MINUTE_LIST.map((m) => (
-                      <option key={m} value={m}>
-                        {pad2(m)}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => setHasEndTime(false)}
-                    aria-label="終了時間を削除"
-                    className="ml-1 text-zinc-400 hover:text-zinc-600 text-lg leading-none"
-                  >
-                    ×
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setHasEndTime(true)}
-                  className="self-start text-sm text-zinc-400 hover:text-zinc-600 border border-dashed border-zinc-300 rounded-xl px-4 py-2"
-                >
-                  + 追加
-                </button>
-              )}
-            </div>
-          </>
-        )}
+        {/* End row: date + time (if !allDay) */}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium text-zinc-500">終了</span>
+          <div className="flex items-center gap-2">
+            <DateButton value={endDate} min={startDate} onChange={setEndDate} label="終了日" />
+            {!allDay && (
+              <TimeSelect
+                hour={endHour}
+                minute={endMinute}
+                onHourChange={setEndHour}
+                onMinuteChange={setEndMinute}
+              />
+            )}
+          </div>
+        </div>
 
         {/* Location */}
         <div className="flex flex-col gap-1.5">
@@ -395,7 +312,7 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
             value={location}
             onChange={(e) => setLocation(e.target.value)}
             placeholder="場所を入力"
-            className="border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-300"
+            className="h-11 border border-zinc-200 rounded-xl px-3 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-300"
           />
         </div>
 
@@ -411,6 +328,84 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---- DateButton ----
+// 日付をボタン風に表示し、タップで native date picker を開く。
+// 透明な <input type="date"> を重ねることで見た目は自由にしつつ
+// iOS / Android の native UI を活用する。
+
+interface DateButtonProps {
+  value: string;
+  onChange: (val: string) => void;
+  min?: string;
+  label: string;
+}
+
+function DateButton({ value, onChange, min, label }: DateButtonProps) {
+  return (
+    // flex-1 min-w-0 で日付欄が時間欄を押し潰さないようにする
+    <div className="relative flex-1 min-w-0">
+      {/* 表示層（pointer-events-none でタップを透過させる） */}
+      <div
+        className="flex items-center h-11 px-3 bg-zinc-100 rounded-xl pointer-events-none select-none"
+        aria-hidden="true"
+      >
+        <span className="text-sm text-zinc-900 truncate leading-none">{formatDate(value)}</span>
+      </div>
+      {/* 透明な入力層（タップを受けて native date picker を開く） */}
+      <input
+        type="date"
+        value={value}
+        min={min}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+      />
+    </div>
+  );
+}
+
+// ---- TimeSelect ----
+// 時・分を select で選択する。appearance-none でブラウザ標準矢印を非表示にし、
+// ボタン風の見た目にする。shrink-0 で幅が潰れないようにする。
+
+interface TimeSelectProps {
+  hour: number;
+  minute: number;
+  onHourChange: (h: number) => void;
+  onMinuteChange: (m: number) => void;
+}
+
+function TimeSelect({ hour, minute, onHourChange, onMinuteChange }: TimeSelectProps) {
+  return (
+    // shrink-0 で日付欄が伸びても時間欄の幅が縮まないようにする
+    <div className="shrink-0 flex items-center h-11 bg-zinc-100 rounded-xl px-2.5 gap-0.5">
+      <select
+        value={hour}
+        onChange={(e) => onHourChange(Number(e.target.value))}
+        className="h-full w-7 bg-transparent text-sm text-zinc-900 appearance-none text-center focus:outline-none"
+      >
+        {HOUR_LIST.map((h) => (
+          <option key={h} value={h}>
+            {pad2(h)}
+          </option>
+        ))}
+      </select>
+      <span className="text-sm text-zinc-900 select-none leading-none">:</span>
+      <select
+        value={minute}
+        onChange={(e) => onMinuteChange(Number(e.target.value))}
+        className="h-full w-7 bg-transparent text-sm text-zinc-900 appearance-none text-center focus:outline-none"
+      >
+        {MINUTE_LIST.map((m) => (
+          <option key={m} value={m}>
+            {pad2(m)}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
