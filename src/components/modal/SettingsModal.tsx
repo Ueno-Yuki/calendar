@@ -175,7 +175,6 @@ export default function SettingsModal({ onClose }: Props) {
               >
                 {roleLabel}
               </span>
-              <span className="text-sm font-medium text-zinc-800">{roleLabel}</span>
             </div>
           </section>
 
