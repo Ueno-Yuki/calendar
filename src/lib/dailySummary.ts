@@ -26,14 +26,6 @@ export function getTodayJst(): string {
   return `${y}-${m}-${d}`;
 }
 
-/** JST 現在時刻を HH:MM で返す */
-function getCurrentJstHHMM(): string {
-  const jst = getNowJst();
-  const h = String(jst.getUTCHours()).padStart(2, '0');
-  const m = String(jst.getUTCMinutes()).padStart(2, '0');
-  return `${h}:${m}`;
-}
-
 // ---- 今日の予定取得 ----
 
 /**
@@ -63,27 +55,6 @@ export async function getTodayEvents(today: string): Promise<Event[]> {
       }
       return true;
     });
-}
-
-// ---- 通知時刻計算 ----
-
-/**
- * 通知時刻 = max("08:00", 最も早い時間指定予定の開始時刻の1時間前)
- * 時間指定予定がない場合は "08:00" 固定。
- */
-export function computeNotificationTime(events: Event[]): string {
-  const timedEvents = events.filter((e) => !e.all_day && e.start_time);
-  if (timedEvents.length === 0) return '08:00';
-
-  const earliest = timedEvents.map((e) => e.start_time).sort()[0];
-  const [h, m] = earliest.split(':').map(Number);
-
-  const notifH = h - 1;
-  const notifM = m;
-  if (notifH < 0) return '08:00';
-
-  const candidate = `${String(notifH).padStart(2, '0')}:${String(notifM).padStart(2, '0')}`;
-  return candidate < '08:00' ? '08:00' : candidate;
 }
 
 // ---- 通知本文構築 ----
@@ -128,23 +99,17 @@ export function buildDailySummaryBody(events: Event[]): string {
 
 /**
  * 今日の予定サマリー通知を実行する。
- * Vercel Cron（10分毎）から呼ばれる想定。
+ * Vercel Cron（毎日 UTC 23:00 = JST 08:00）から呼ばれる想定。
  * - 予定が0件の日は何もしない
- * - 現在 JST 時刻が通知時刻未満なら何もしない
  * - 送信失敗は notification_logs に記録するが呼び出し元へは伝播させない
  * - 1ユーザーの失敗が他ユーザーの通知を止めない
  */
 export async function runDailySummary(): Promise<void> {
   const today = getTodayJst();
-  const currentTime = getCurrentJstHHMM();
 
   // 今日の予定取得
   const todayEvents = await getTodayEvents(today);
   if (todayEvents.length === 0) return;
-
-  // 通知時刻チェック
-  const notifTime = computeNotificationTime(todayEvents);
-  if (currentTime < notifTime) return;
 
   // 通知ペイロード（全ユーザー共通）
   const body = buildDailySummaryBody(todayEvents);
