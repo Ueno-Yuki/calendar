@@ -55,8 +55,13 @@ function assignBarRows(bars: Omit<MultiDayBar, 'barRow'>[]): MultiDayBar[] {
 function getPersonDayChips(dateStr: string, events: Event[]): PersonDayChip[] {
   const chips: PersonDayChip[] = [];
   for (const person of DISPLAY_ORDER) {
+    // 複数日予定はバーで表示するためチップには含めない
     const dayEvents = events.filter(
-      (e) => e.person === person && !e.deleted && e.start_date <= dateStr && e.end_date >= dateStr,
+      (e) =>
+        e.person === person &&
+        !e.deleted &&
+        e.start_date === dateStr &&
+        e.end_date === dateStr,
     );
     if (dayEvents.length === 0) continue;
 

@@ -51,6 +51,7 @@ export default function CalendarGrid({
   return (
     <div
       className="flex flex-col flex-1 min-h-0 select-none relative"
+      style={{ touchAction: 'pan-y' }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >

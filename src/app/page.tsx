@@ -95,7 +95,7 @@ export default function CalendarPage() {
   }
 
   return (
-    <div className="flex flex-col h-[100dvh] bg-white">
+    <div className="flex flex-col h-[100dvh] bg-white" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
       <CalendarHeader year={year} month={month} syncing={syncing} />
       <CalendarGrid
         year={year}
