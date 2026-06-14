@@ -15,6 +15,7 @@ interface Props {
 export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
   const { days, multiDayBars, totalBarRows, dayChips } = weekData;
   const barSectionHeight = totalBarRows * (BAR_HEIGHT + BAR_GAP);
+  const todayCol = days.findIndex((d) => d.isToday);
 
   return (
     <div className="border-b border-zinc-100 flex-1 flex flex-col min-h-0">
@@ -38,11 +39,11 @@ export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
               key={day.dateStr}
               type="button"
               onClick={() => onDayPress(day.dateStr)}
-              className="flex flex-col items-center w-full pt-0.5 pb-0 focus:outline-none"
+              className={`flex flex-col items-center w-full pt-0.5 pb-0 focus:outline-none ${day.isToday ? 'bg-slate-100' : ''}`}
             >
               <span
-                className={`text-xs font-medium leading-5 w-5 h-5 flex items-center justify-center rounded-full ${numClass} ${
-                  day.isToday ? 'ring-2 ring-inset ring-zinc-700' : ''
+                className={`text-xs font-medium leading-5 w-5 h-5 flex items-center justify-center rounded-full ${
+                  day.isToday ? 'bg-zinc-800 text-white' : numClass
                 }`}
               >
                 {dayNum}
@@ -60,6 +61,16 @@ export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
       {/* 段2: 複数日予定バー — 日付行の直下 */}
       {totalBarRows > 0 && (
         <div className="relative shrink-0" style={{ height: barSectionHeight }}>
+          {/* 今日列の背景 (バーより前に描画してz-indexで後ろに) */}
+          {todayCol >= 0 && (
+            <div
+              className="absolute inset-y-0 bg-slate-100"
+              style={{
+                left: `${(todayCol / 7) * 100}%`,
+                width: `${(1 / 7) * 100}%`,
+              }}
+            />
+          )}
           {multiDayBars.map((bar, i) => {
             const leftPct = `${(bar.startCol / 7) * 100}%`;
             const widthPct = `${((bar.endCol - bar.startCol + 1) / 7) * 100}%`;
@@ -102,6 +113,7 @@ export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
           <CalendarCell
             key={day.dateStr}
             chips={dayChips.get(day.dateStr) ?? []}
+            isToday={day.isToday}
             onPress={() => onDayPress(day.dateStr)}
           />
         ))}

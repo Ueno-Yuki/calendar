@@ -5,15 +5,16 @@ import { FAMILY_COLORS } from '@/lib/colors';
 
 interface Props {
   chips: PersonDayChip[];
+  isToday?: boolean;
   onPress: () => void;
 }
 
-export default function CalendarCell({ chips, onPress }: Props) {
+export default function CalendarCell({ chips, isToday, onPress }: Props) {
   return (
     <button
       type="button"
       onClick={onPress}
-      className="flex flex-col items-start w-full h-full p-0.5 overflow-hidden focus:outline-none"
+      className={`flex flex-col items-start w-full h-full p-0.5 overflow-hidden focus:outline-none ${isToday ? 'bg-slate-100' : ''}`}
     >
       <div className="flex flex-col gap-px w-full overflow-hidden">
         {chips.map((chip) => {
