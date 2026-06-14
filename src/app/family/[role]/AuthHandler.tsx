@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import type { FamilyRole } from '@/types';
 import { STORAGE_KEY, COOKIE_NAME, type StoredUser } from '@/lib/auth';
+import { apiFetch } from '@/lib/apiClient';
 
 interface Props {
   role: FamilyRole;
@@ -24,7 +25,27 @@ export default function AuthHandler({ role, token }: Props) {
     const user: StoredUser = { role, token };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
     writeAuthCookie(role, token);
-    router.replace('/');
+
+    if (role !== 'mother') {
+      router.replace('/');
+      return;
+    }
+
+    // mother のみ: Google 連携済みか確認し、未連携なら OAuth へ誘導する
+    apiFetch('/api/auth/google/status')
+      .then((res) => (res.ok ? (res.json() as Promise<{ connected: boolean }>) : null))
+      .then((data) => {
+        if (data?.connected) {
+          router.replace('/');
+        } else {
+          // Cookie が付いた状態で /api/auth/google へ遷移する
+          window.location.href = '/api/auth/google';
+        }
+      })
+      .catch(() => {
+        // 確認失敗時はトップへ（Google 連携なしで通常利用）
+        router.replace('/');
+      });
   }, [role, token, router]);
 
   return (
