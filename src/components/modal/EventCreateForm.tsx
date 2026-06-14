@@ -7,6 +7,7 @@ import { apiFetch } from '@/lib/apiClient';
 import { STORAGE_KEY } from '@/lib/auth';
 import type { StoredUser } from '@/lib/auth';
 import { FAMILY_COLORS } from '@/lib/colors';
+import { isKappaTitle, formatEndTime, KAPPA_LAST_END_TIME } from '@/lib/kappaShift';
 
 const HOUR_LIST = Array.from({ length: 24 }, (_, i) => i);
 const MINUTE_LIST = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
@@ -66,6 +67,15 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
   const [errors, setErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [suggestions, setSuggestions] = useState<EventTemplate[]>([]);
+  const [isLast, setIsLast] = useState(false);
+
+  // 母 + かっぱタイトルの場合のみ「ラスト」選択肢を表示
+  const showLastOption = currentRole === 'mother' && isKappaTitle(title);
+
+  // タイトルが「かっぱ」「カッパ」から外れたらラスト選択を解除
+  useEffect(() => {
+    if (!showLastOption) setIsLast(false);
+  }, [showLastOption]);
 
   useEffect(() => {
     const query = title.trim();
@@ -107,7 +117,10 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
     if (!allDay && (startHour == null || startMinute == null))
       errs.push('開始時間を入力してください');
     if (!allDay && startDate === endDate) {
-      if (endHour * 60 + endMinute <= startHour * 60 + startMinute)
+      // ラスト選択時は end = 23:59 として判定
+      const effEndH = isLast ? 23 : endHour;
+      const effEndM = isLast ? 59 : endMinute;
+      if (effEndH * 60 + effEndM <= startHour * 60 + startMinute)
         errs.push('終了時間は開始時間より後を指定してください');
     }
     return errs;
@@ -125,7 +138,7 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
         end_date: endDate,
         all_day: allDay,
         start_time: allDay ? '' : `${pad2(startHour)}:${pad2(startMinute)}`,
-        end_time: allDay ? '' : `${pad2(endHour)}:${pad2(endMinute)}`,
+        end_time: allDay ? '' : isLast ? KAPPA_LAST_END_TIME : `${pad2(endHour)}:${pad2(endMinute)}`,
         location,
         memo,
       };
@@ -203,8 +216,11 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
             <div className="absolute z-10 left-4 right-4 top-full mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
               {suggestions.map((s) => {
                 const color = FAMILY_COLORS[s.person];
+                const displayEnd = s.end_time
+                  ? formatEndTime({ person: s.person, title: s.title, end_time: s.end_time })
+                  : '';
                 const timeLabel = s.start_time
-                  ? s.end_time ? `${s.start_time}〜${s.end_time}` : s.start_time
+                  ? displayEnd ? `${s.start_time}〜${displayEnd}` : s.start_time
                   : '';
                 return (
                   <button
@@ -280,12 +296,35 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
             <span className="text-sm text-zinc-500 shrink-0 w-8">終了</span>
             <DateButton value={endDate} min={startDate} onChange={setEndDate} label="終了日" />
             {!allDay && (
-              <TimeSelect
-                hour={endHour}
-                minute={endMinute}
-                onHourChange={setEndHour}
-                onMinuteChange={setEndMinute}
-              />
+              isLast ? (
+                /* ラスト選択中 — ダークボタンをタップで解除 */
+                <button
+                  type="button"
+                  onClick={() => setIsLast(false)}
+                  className="shrink-0 h-9 px-3 rounded-lg bg-zinc-800 text-sm text-white font-medium"
+                >
+                  ラスト
+                </button>
+              ) : (
+                <>
+                  <TimeSelect
+                    hour={endHour}
+                    minute={endMinute}
+                    onHourChange={setEndHour}
+                    onMinuteChange={setEndMinute}
+                  />
+                  {/* 母 + かっぱタイトルのときのみ「ラスト」ボタンを表示 */}
+                  {showLastOption && (
+                    <button
+                      type="button"
+                      onClick={() => setIsLast(true)}
+                      className="shrink-0 h-9 px-2.5 rounded-lg bg-zinc-100 text-sm text-zinc-500 active:bg-zinc-200"
+                    >
+                      ラスト
+                    </button>
+                  )}
+                </>
+              )
             )}
           </div>
         </ListRow>

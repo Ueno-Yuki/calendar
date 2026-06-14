@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useRef } from 'react';
 import { X, Plus, Trash2, MapPin } from 'lucide-react';
+import { formatEventTimeRange } from '@/lib/kappaShift';
 import type { Event, FamilyRole } from '@/types';
 import { FAMILY_COLORS } from '@/lib/colors';
 import { STORAGE_KEY } from '@/lib/auth';
@@ -309,12 +310,8 @@ interface EventCardProps {
 
 function EventCard({ event, showTime, canDelete, onDeleteRequest }: EventCardProps) {
   const color = FAMILY_COLORS[event.person];
-  const timeLabel =
-    showTime && event.start_time
-      ? event.end_time
-        ? `${event.start_time}〜${event.end_time}`
-        : event.start_time
-      : '';
+  // ラスト条件を満たす場合は「09:00〜ラスト」のように表示
+  const timeLabel = showTime ? formatEventTimeRange(event) : '';
 
   return (
     <div
