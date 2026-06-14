@@ -10,7 +10,6 @@ import EventCreateForm from './EventCreateForm';
 import DeleteConfirmModal from './DeleteConfirmModal';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const DELETE_BTN_WIDTH = 64; // px
 
 interface Props {
@@ -44,7 +43,6 @@ export default function DayModal({
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Read current user from localStorage once on mount
   const [currentRole] = useState<FamilyRole | null>(readCurrentRole);
 
   const date = new Date(`${dateStr}T00:00:00`);
@@ -57,24 +55,19 @@ export default function DayModal({
     [events, dateStr],
   );
 
+  // 終日・複数日予定（当日開始でない複数日含む）
   const allDaySection = dayEvents.filter(
     (e) => e.all_day || (e.start_date !== e.end_date && e.start_date !== dateStr),
   );
 
-  const timedSection = dayEvents.filter(
-    (e) => !e.all_day && (e.start_date === e.end_date || e.start_date === dateStr),
+  // 時刻付き予定を開始時刻昇順でソート
+  const timedSection = useMemo(
+    () =>
+      dayEvents
+        .filter((e) => !e.all_day && (e.start_date === e.end_date || e.start_date === dateStr))
+        .sort((a, b) => a.start_time.localeCompare(b.start_time)),
+    [dayEvents],
   );
-
-  const eventsByHour = useMemo(() => {
-    const map = new Map<number, Event[]>();
-    for (const e of timedSection) {
-      const hour = parseInt(e.start_time.split(':')[0] ?? '0', 10) || 0;
-      const list = map.get(hour) ?? [];
-      list.push(e);
-      map.set(hour, list);
-    }
-    return map;
-  }, [timedSection]);
 
   const handleSaved = () => {
     onEventCreated();
@@ -95,16 +88,18 @@ export default function DayModal({
     setIsDeleting(true);
     try {
       const [y, m] = eventToDelete.start_date.split('-');
+      // 論理削除（deleted = TRUE）。物理削除はしない。
+      // 将来的に「最近削除した予定」画面を実装し、
+      // deleted = TRUE の予定を復元可能にする予定。
       const res = await apiFetch(
         `/api/events/${eventToDelete.id}?year=${y}&month=${m}`,
         { method: 'DELETE' },
       );
-      if (!res.ok) return; // サーバー側エラーは無視して継続
+      if (!res.ok) return;
       setEventToDelete(null);
       setSwipedEventId(null);
       onEventDeleted();
     } catch {
-      // 通信エラーは無視して確認モーダルを閉じる
       setEventToDelete(null);
       setSwipedEventId(null);
     } finally {
@@ -114,7 +109,6 @@ export default function DayModal({
 
   const canSwipe = (event: Event) => currentRole !== null && event.owner === currentRole;
 
-  // Prevent backdrop from closing modal while create form or delete confirm is open
   const backdropClickable = mode === 'schedule' && eventToDelete === null;
 
   return (
@@ -126,7 +120,7 @@ export default function DayModal({
         aria-hidden="true"
       />
 
-      {/* Bottom sheet */}
+      {/* Bottom sheet — content-sized, capped at 90dvh */}
       <div className="fixed inset-x-0 bottom-0 z-50 flex flex-col bg-white rounded-t-2xl max-h-[90dvh]">
         {mode === 'create' ? (
           <EventCreateForm
@@ -136,7 +130,7 @@ export default function DayModal({
           />
         ) : (
           <>
-            {/* Schedule header */}
+            {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 shrink-0">
               <button
                 type="button"
@@ -161,44 +155,24 @@ export default function DayModal({
               </button>
             </div>
 
-            {/* Scrollable schedule body */}
-            <div className="overflow-y-auto flex-1 pb-8">
-              {allDaySection.length > 0 && (
-                <div className="px-4 py-2 border-b border-zinc-100">
-                  <p className="text-[10px] text-zinc-400 mb-1.5">終日・複数日</p>
-                  <div className="flex flex-col gap-1.5">
-                    {allDaySection.map((e) => (
-                      <SwipeableEventCard
-                        key={e.id}
-                        event={e}
-                        showTime={false}
-                        isSwiped={swipedEventId === e.id}
-                        canDelete={canSwipe(e)}
-                        onSwipe={() => setSwipedEventId(e.id)}
-                        onCloseSwipe={() => setSwipedEventId(null)}
-                        onDeleteRequest={handleDeleteRequest}
-                      />
-                    ))}
-                  </div>
+            {/* Event list — overflow-y-auto makes min-height 0 so container shrinks/scrolls correctly */}
+            <div className="overflow-y-auto pb-8">
+              {dayEvents.length === 0 ? (
+                <div className="px-4 py-10 text-center">
+                  <p className="text-sm text-zinc-400">予定はありません</p>
                 </div>
-              )}
-
-              <div>
-                {HOURS.map((hour) => {
-                  const evs = eventsByHour.get(hour) ?? [];
-                  return (
-                    <div key={hour} className="flex border-b border-zinc-50 min-h-[56px]">
-                      <div className="w-14 shrink-0 pt-2 text-right pr-2">
-                        <span className="text-[10px] text-zinc-400">
-                          {String(hour).padStart(2, '0')}:00
-                        </span>
-                      </div>
-                      <div className="flex-1 py-1 pr-3 flex flex-col gap-1.5">
-                        {evs.map((e) => (
+              ) : (
+                <>
+                  {/* 終日・複数日 */}
+                  {allDaySection.length > 0 && (
+                    <div className="px-4 pt-3 pb-3 border-b border-zinc-100">
+                      <p className="text-[10px] font-medium text-zinc-400 mb-2">終日・複数日</p>
+                      <div className="flex flex-col gap-2">
+                        {allDaySection.map((e) => (
                           <SwipeableEventCard
                             key={e.id}
                             event={e}
-                            showTime
+                            showTime={false}
                             isSwiped={swipedEventId === e.id}
                             canDelete={canSwipe(e)}
                             onSwipe={() => setSwipedEventId(e.id)}
@@ -208,15 +182,33 @@ export default function DayModal({
                         ))}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  )}
+
+                  {/* 時刻付き予定 */}
+                  {timedSection.length > 0 && (
+                    <div className="px-4 pt-3 pb-1 flex flex-col gap-2">
+                      {timedSection.map((e) => (
+                        <SwipeableEventCard
+                          key={e.id}
+                          event={e}
+                          showTime
+                          isSwiped={swipedEventId === e.id}
+                          canDelete={canSwipe(e)}
+                          onSwipe={() => setSwipedEventId(e.id)}
+                          onCloseSwipe={() => setSwipedEventId(null)}
+                          onDeleteRequest={handleDeleteRequest}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </>
         )}
       </div>
 
-      {/* Delete confirmation (renders above DayModal sheet) */}
+      {/* Delete confirmation */}
       {eventToDelete && (
         <DeleteConfirmModal
           event={eventToDelete}
@@ -268,8 +260,8 @@ function SwipeableEventCard({
   };
 
   return (
-    <div className="relative overflow-hidden rounded-lg">
-      {/* Delete button (revealed on left swipe) */}
+    <div className="relative overflow-hidden rounded-xl">
+      {/* Delete button */}
       {canDelete && (
         <div
           className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500"
@@ -291,7 +283,7 @@ function SwipeableEventCard({
         </div>
       )}
 
-      {/* Event card (slides left to reveal delete button) */}
+      {/* Event card (slides left to reveal delete) */}
       <div
         style={{
           transform: isSwiped ? `translateX(-${DELETE_BTN_WIDTH}px)` : 'translateX(0)',
@@ -300,7 +292,12 @@ function SwipeableEventCard({
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        <EventCard event={event} showTime={showTime} />
+        <EventCard
+          event={event}
+          showTime={showTime}
+          canDelete={canDelete}
+          onDeleteRequest={() => onDeleteRequest(event)}
+        />
       </div>
     </div>
   );
@@ -308,7 +305,14 @@ function SwipeableEventCard({
 
 // ---- EventCard ----
 
-function EventCard({ event, showTime }: { event: Event; showTime: boolean }) {
+interface EventCardProps {
+  event: Event;
+  showTime: boolean;
+  canDelete?: boolean;
+  onDeleteRequest?: () => void;
+}
+
+function EventCard({ event, showTime, canDelete, onDeleteRequest }: EventCardProps) {
   const color = FAMILY_COLORS[event.person];
   const timeLabel =
     showTime && event.start_time
@@ -320,19 +324,42 @@ function EventCard({ event, showTime }: { event: Event; showTime: boolean }) {
   return (
     <div
       style={{ borderLeftColor: color.main, backgroundColor: color.light }}
-      className="border-l-[3px] rounded-r-lg px-2.5 py-1.5"
+      className="border-l-[3px] rounded-r-xl px-3 py-2.5"
     >
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {timeLabel && (
-          <span className="text-[10px] text-zinc-500 shrink-0">{timeLabel}</span>
+      {timeLabel && (
+        <p className="text-xs font-medium text-zinc-500 mb-1.5 tabular-nums">{timeLabel}</p>
+      )}
+      {/* person + title + delete icon */}
+      <div className="flex items-start gap-1">
+        <div className="flex items-baseline gap-1.5 flex-1 min-w-0">
+          <span style={{ color: color.main }} className="text-xs font-bold shrink-0">
+            {color.label}
+          </span>
+          <span className="text-sm font-semibold text-zinc-900 leading-snug">{event.title}</span>
+        </div>
+        {canDelete && onDeleteRequest && (
+          <button
+            type="button"
+            onClick={onDeleteRequest}
+            aria-label="削除"
+            className="shrink-0 p-0.5 -mt-0.5 text-zinc-300 hover:text-red-400 active:text-red-500"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3,6 5,6 21,6" />
+              <path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6" />
+              <path d="M10,11v6M14,11v6" />
+              <path d="M9,6V4a1,1,0,0,1,1-1h4a1,1,0,0,1,1,1v2" />
+            </svg>
+          </button>
         )}
-        <span style={{ color: color.main }} className="text-[10px] font-semibold shrink-0">
-          {color.label}
-        </span>
-        <span className="text-sm font-medium text-zinc-900 truncate">{event.title}</span>
       </div>
       {event.location && (
-        <p className="text-xs text-zinc-400 mt-0.5 truncate">📍 {event.location}</p>
+        <p className="text-xs text-zinc-500 mt-1 truncate">📍 {event.location}</p>
+      )}
+      {event.memo && (
+        <p className="text-xs text-zinc-400 mt-0.5 line-clamp-2 whitespace-pre-line">
+          {event.memo}
+        </p>
       )}
     </div>
   );
