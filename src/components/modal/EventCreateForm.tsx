@@ -1,7 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import type { EventTemplate, FamilyRole } from '@/types';
 import { apiFetch } from '@/lib/apiClient';
+import { STORAGE_KEY } from '@/lib/auth';
+import type { StoredUser } from '@/lib/auth';
+import { FAMILY_COLORS } from '@/lib/colors';
 
 const HOUR_LIST = Array.from({ length: 24 }, (_, i) => i);
 const MINUTE_LIST = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
@@ -17,6 +21,17 @@ function roundTo5Min(date: Date): { hour: number; minute: number } {
   return { hour: date.getHours(), minute: rounded };
 }
 
+function readCurrentRole(): FamilyRole | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return (JSON.parse(raw) as StoredUser).role;
+  } catch {
+    return null;
+  }
+}
+
 interface Props {
   dateStr: string;
   onSaved: () => void;
@@ -28,6 +43,7 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
   const { hour: initHour, minute: initMin } = roundTo5Min(now);
   const initEndHour = (initHour + 1) % 24;
 
+  const [currentRole] = useState<FamilyRole | null>(readCurrentRole);
   const [title, setTitle] = useState('');
   const [startDate, setStartDate] = useState(dateStr);
   const [endDate, setEndDate] = useState(dateStr);
@@ -41,6 +57,48 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
   const [memo, setMemo] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [suggestions, setSuggestions] = useState<EventTemplate[]>([]);
+
+  // タイトル入力中にサジェストを取得（300ms デバウンス）
+  useEffect(() => {
+    const query = title.trim();
+    if (!query) {
+      setSuggestions([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ title: query });
+        if (currentRole) params.set('person', currentRole);
+        const res = await apiFetch(`/api/event-suggestions?${params.toString()}`);
+        if (res.ok) {
+          setSuggestions((await res.json()) as EventTemplate[]);
+        }
+      } catch {
+        setSuggestions([]);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [title, currentRole]);
+
+  const applyTemplate = (template: EventTemplate) => {
+    if (template.start_time) {
+      const [h, m] = template.start_time.split(':').map(Number);
+      setStartHour(h);
+      setStartMinute(m);
+    }
+    if (template.end_time) {
+      const [h, m] = template.end_time.split(':').map(Number);
+      setEndHour(h);
+      setEndMinute(m);
+      setHasEndTime(true);
+    } else {
+      setHasEndTime(false);
+    }
+    setLocation(template.location);
+    setMemo(template.memo);
+    setSuggestions([]);
+  };
 
   const validate = (): string[] => {
     const errs: string[] = [];
@@ -49,6 +107,10 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
     if (!endDate) errs.push('終了日を入力してください');
     if (startDate && endDate && endDate < startDate)
       errs.push('終了日は開始日以降を指定してください');
+    // 終日OFFの場合は開始時間必須（UIでは常に設定されるが仕様上明示チェック）
+    if (!allDay && (startHour == null || startMinute == null)) {
+      errs.push('開始時間を入力してください');
+    }
     if (!allDay && hasEndTime && startDate === endDate) {
       if (endHour * 60 + endMinute < startHour * 60 + startMinute)
         errs.push('終了時間は開始時間より後を指定してください');
@@ -97,6 +159,8 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
     if (endDate < val) setEndDate(val);
   };
 
+  const showSuggestions = suggestions.length > 0 && title.trim().length > 0;
+
   return (
     <div className="flex flex-col h-full">
       {/* Form header */}
@@ -133,18 +197,62 @@ export default function EventCreateForm({ dateStr, onSaved, onCancel }: Props) {
           </div>
         )}
 
-        {/* Title */}
+        {/* Title with suggestions */}
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-zinc-500">
             タイトル <span className="text-red-500">*</span>
           </label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="予定のタイトル"
-            className="border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-300"
-          />
+          <div className="relative">
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="予定のタイトル"
+              className="w-full border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-300"
+            />
+            {/* Suggestions dropdown */}
+            {showSuggestions && (
+              <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
+                {suggestions.map((s) => {
+                  const color = FAMILY_COLORS[s.person];
+                  const timeLabel = s.start_time
+                    ? s.end_time
+                      ? `${s.start_time}〜${s.end_time}`
+                      : s.start_time
+                    : '';
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      // onPointerDown で preventDefault することでタイトル input の focus を保持し
+                      // onClick が確実に発火するようにする
+                      onPointerDown={(e) => e.preventDefault()}
+                      onClick={() => applyTemplate(s)}
+                      className="w-full text-left px-3 py-2.5 hover:bg-zinc-50 border-b border-zinc-100 last:border-0"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          style={{ color: color.main }}
+                          className="text-[10px] font-semibold shrink-0"
+                        >
+                          {color.label}
+                        </span>
+                        <span className="text-sm text-zinc-900 truncate flex-1">{s.title}</span>
+                        {timeLabel && (
+                          <span className="text-[10px] text-zinc-400 shrink-0">{timeLabel}</span>
+                        )}
+                      </div>
+                      {s.location && (
+                        <p className="text-[10px] text-zinc-400 mt-0.5 pl-5 truncate">
+                          📍 {s.location}
+                        </p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* All-day toggle */}

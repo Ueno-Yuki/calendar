@@ -97,18 +97,18 @@ export function getMonthSheetName(year: number, month: number): string {
 }
 
 /**
- * 月別イベントシートが存在しなければ作成し、ヘッダー行を書き込む。
+ * 指定シートが存在しなければ作成し、ヘッダー行を書き込む。
  * 既に存在する場合は何もしない。
  */
-export async function ensureMonthSheet(year: number, month: number): Promise<void> {
-  const sheetName = getMonthSheetName(year, month);
+export async function ensureSheet(
+  sheetName: string,
+  headers: readonly string[],
+): Promise<void> {
   const spreadsheetId = getSpreadsheetId();
   const sheets = getSheetsClient();
 
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
-  const exists = meta.data.sheets?.some(
-    (s) => s.properties?.title === sheetName,
-  ) ?? false;
+  const exists = meta.data.sheets?.some((s) => s.properties?.title === sheetName) ?? false;
 
   if (exists) return;
 
@@ -123,6 +123,14 @@ export async function ensureMonthSheet(year: number, month: number): Promise<voi
     spreadsheetId,
     range: `${sheetName}!A1`,
     valueInputOption: 'RAW',
-    requestBody: { values: [EVENT_HEADERS as unknown as string[]] },
+    requestBody: { values: [headers as unknown as string[]] },
   });
+}
+
+/**
+ * 月別イベントシートが存在しなければ作成し、ヘッダー行を書き込む。
+ * 既に存在する場合は何もしない。
+ */
+export async function ensureMonthSheet(year: number, month: number): Promise<void> {
+  await ensureSheet(getMonthSheetName(year, month), EVENT_HEADERS);
 }

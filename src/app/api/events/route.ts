@@ -3,6 +3,7 @@ import type { Event } from '@/types';
 import { getCurrentUser, AuthError } from '@/lib/auth';
 import { getRows, appendRow, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
 import { parseEventRow, eventToValues } from '@/lib/eventsDb';
+import { upsertTemplate } from '@/lib/templatesDb';
 
 // ---- 日付ユーティリティ ----
 
@@ -182,6 +183,16 @@ export async function POST(request: NextRequest) {
     const startMonth = parseInt(startMonthStr);
     await ensureMonthSheet(startYear, startMonth);
     await appendRow(getMonthSheetName(startYear, startMonth), eventToValues(event));
+
+    // テンプレートを upsert（失敗してもイベント登録の成否に影響しない）
+    upsertTemplate({
+      person: event.person,
+      title: event.title,
+      start_time: event.start_time,
+      end_time: event.end_time,
+      location: event.location,
+      memo: event.memo,
+    }).catch(() => {});
 
     return Response.json(event, { status: 201 });
   } catch {
