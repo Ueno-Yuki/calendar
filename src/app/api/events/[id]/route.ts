@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server';
 import type { Event } from '@/types';
 import { getCurrentUser, AuthError } from '@/lib/auth';
-import { updateRow } from '@/lib/sheets';
+import { updateRow, appendRow, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
 import { findEventById, eventToValues } from '@/lib/eventsDb';
 import { deleteGCalEvent, updateGCalEvent } from '@/lib/googleCalendar';
 import { sendInstantNotification } from '@/lib/notificationService';
@@ -133,7 +133,26 @@ export async function PUT(
       updateGCalEvent(found.event.google_event_id, updated).catch(() => {});
     }
 
-    await updateRow(found.sheetName, found.dataRowIndex, eventToValues(updated));
+    const oldMonthKey = found.event.start_date.slice(0, 7); // YYYY-MM
+    const newMonthKey = input.start_date.slice(0, 7);
+
+    if (oldMonthKey !== newMonthKey) {
+      // start_date の月が変わった場合:
+      // 旧シートの行を論理削除し、新シートへ同じ id で新規追加する
+      const deletedOld: Event = {
+        ...found.event,
+        deleted: true,
+        updated_at: updated.updated_at,
+      };
+      await updateRow(found.sheetName, found.dataRowIndex, eventToValues(deletedOld));
+
+      const [newYStr, newMStr] = input.start_date.split('-');
+      await ensureMonthSheet(parseInt(newYStr), parseInt(newMStr));
+      await appendRow(getMonthSheetName(parseInt(newYStr), parseInt(newMStr)), eventToValues(updated));
+    } else {
+      await updateRow(found.sheetName, found.dataRowIndex, eventToValues(updated));
+    }
+
     return Response.json(updated);
   } catch {
     return Response.json({ error: '予定の更新に失敗しました' }, { status: 500 });

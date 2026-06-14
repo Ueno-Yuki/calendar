@@ -10,6 +10,7 @@ import SettingsModal from '@/components/modal/SettingsModal';
 import NotificationPromptModal, {
   NOTIFICATION_PROMPT_DISMISSED_KEY,
 } from '@/components/modal/NotificationPromptModal';
+import YearMonthPickerModal from '@/components/modal/YearMonthPickerModal';
 
 interface EventsResponse {
   events: Event[];
@@ -36,6 +37,7 @@ export default function CalendarPage() {
   const [pendingDate, setPendingDate] = useState<string | null>(null);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showYearMonthPicker, setShowYearMonthPicker] = useState(false);
   const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
   const notificationPromptCheckedRef = useRef(false);
 
@@ -230,7 +232,13 @@ export default function CalendarPage() {
 
   return (
     <div className="flex flex-col h-[100dvh] bg-white" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      <CalendarHeader year={year} month={month} syncing={syncing || isGoogleSyncing} onSettingsOpen={() => setShowSettings(true)} />
+      <CalendarHeader
+        year={year}
+        month={month}
+        syncing={syncing || isGoogleSyncing}
+        onSettingsOpen={() => setShowSettings(true)}
+        onYearMonthPress={() => setShowYearMonthPicker(true)}
+      />
 
       {/* 入力中に同期完了した場合の保留バナー */}
       {showUpdateBanner && (
@@ -258,6 +266,14 @@ export default function CalendarPage() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showYearMonthPicker && (
+        <YearMonthPickerModal
+          currentYear={year}
+          currentMonth={month}
+          onConfirm={(y, m) => setYearMonth({ year: y, month: m })}
+          onClose={() => setShowYearMonthPicker(false)}
+        />
+      )}
       {showNotificationPrompt && (
         <NotificationPromptModal onClose={() => setShowNotificationPrompt(false)} />
       )}

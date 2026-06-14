@@ -109,8 +109,6 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await ensureMonthSheet(year, month);
-
     const currentSheetName = getMonthSheetName(year, month);
     const prev = getPrevMonth(year, month);
     const prevSheetName = getMonthSheetName(prev.year, prev.month);
