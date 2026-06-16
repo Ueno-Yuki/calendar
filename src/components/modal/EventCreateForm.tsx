@@ -53,6 +53,10 @@ function readCurrentRole(): FamilyRole | null {
   }
 }
 
+function canUseKappaLast(role: FamilyRole | null): boolean {
+  return role === 'mother' || role === 'me';
+}
+
 interface Props {
   dateStr: string;
   mode?: 'create' | 'edit';
@@ -95,8 +99,8 @@ export default function EventCreateForm({
   // どの時刻ピッカーを開いているか
   const [timePickerFor, setTimePickerFor] = useState<'start' | 'end' | null>(null);
 
-  // 母 + かっぱタイトルの場合のみ「ラスト」選択肢を表示
-  const showLastOption = currentRole === 'mother' && isKappaTitle(title);
+  // 母または自分 + かっぱタイトルの場合のみ「ラスト」選択肢を表示
+  const showLastOption = canUseKappaLast(currentRole) && isKappaTitle(title);
 
   // タイトルが「かっぱ」「カッパ」から外れたらラスト選択を解除
   useEffect(() => {
@@ -141,7 +145,7 @@ export default function EventCreateForm({
     setTitle(template.title);
     if (template.start_time) setStartTime(template.start_time);
     if (template.end_time) {
-      const templateSupportsLast = currentRole === 'mother' && isKappaTitle(template.title);
+      const templateSupportsLast = canUseKappaLast(currentRole) && isKappaTitle(template.title);
       if (template.end_time === KAPPA_LAST_END_TIME && templateSupportsLast) {
         setIsLast(true);
       } else {

@@ -146,7 +146,7 @@ export default function TimePickerSheet({
               );
             })}
 
-            {/* ラスト（母+かっぱタイトルのみ、分リストの末尾） */}
+            {/* ラスト（対象role+かっぱタイトルのみ、分リストの末尾） */}
             {showLastOption && (
               <li>
                 <button

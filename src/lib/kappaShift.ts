@@ -1,6 +1,6 @@
 // かっぱシフト「ラスト」表示ユーティリティ
 //
-// 母がシフト予定に「かっぱ」または「カッパ」を含むタイトルで
+// 母または自分がシフト予定に「かっぱ」または「カッパ」を含むタイトルで
 // end_time = "23:59" を登録した場合、UI上は「ラスト」と表示する。
 // 保存値は end_time = "23:59" のまま。新しいカラムは追加しない。
 
@@ -11,7 +11,7 @@ export function isKappaTitle(title: string): boolean {
 }
 
 // ラスト表示条件を満たすかどうか
-// - person または owner が mother
+// - person または owner が mother / me
 // - title に「かっぱ」または「カッパ」を含む
 // - end_time === "23:59"
 export function isKappaShiftLast(item: {
@@ -20,8 +20,12 @@ export function isKappaShiftLast(item: {
   title: string;
   end_time: string;
 }): boolean {
-  const isMother = item.person === 'mother' || item.owner === 'mother';
-  return isMother && isKappaTitle(item.title) && item.end_time === KAPPA_LAST_END_TIME;
+  const isSupportedRole =
+    item.person === 'mother' ||
+    item.owner === 'mother' ||
+    item.person === 'me' ||
+    item.owner === 'me';
+  return isSupportedRole && isKappaTitle(item.title) && item.end_time === KAPPA_LAST_END_TIME;
 }
 
 // 終了時間を表示用テキストに変換
