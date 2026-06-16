@@ -6,7 +6,6 @@ import type { EventTemplate, FamilyRole } from '@/types';
 import { apiFetch } from '@/lib/apiClient';
 import { STORAGE_KEY } from '@/lib/auth';
 import type { StoredUser } from '@/lib/auth';
-import { FAMILY_COLORS } from '@/lib/colors';
 import type { Event } from '@/types';
 import { isKappaTitle, formatEndTime, KAPPA_LAST_END_TIME } from '@/lib/kappaShift';
 import TimePickerSheet from '@/components/modal/TimePickerSheet';
@@ -129,8 +128,6 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
         setIsLast(false);
       }
     }
-    setLocation(template.location);
-    setMemo(template.memo);
     setSuggestions([]);
   };
 
@@ -276,7 +273,6 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
           {showSuggestions && (
             <div className="absolute z-10 left-4 right-4 top-full mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
               {suggestions.map((s) => {
-                const color = FAMILY_COLORS[s.person];
                 const displayEnd = s.end_time
                   ? formatEndTime({ person: s.person, title: s.title, end_time: s.end_time })
                   : '';
@@ -296,7 +292,6 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
                       className="flex-1 text-left px-3 py-2.5 hover:bg-zinc-50 active:bg-zinc-100 min-w-0"
                     >
                       <div className="flex items-center gap-2">
-                        <span style={{ color: color.main }} className="text-[10px] font-semibold shrink-0">{color.label}</span>
                         <span className="text-sm text-zinc-900 truncate flex-1">{s.title}</span>
                         {timeLabel && <span className="text-[10px] text-zinc-400 shrink-0">{timeLabel}</span>}
                       </div>
