@@ -5,7 +5,6 @@ import { getRows, appendRow, getMonthSheetName, ensureMonthSheet } from '@/lib/s
 import { parseEventRow, eventToValues } from '@/lib/eventsDb';
 import { upsertTemplate } from '@/lib/templatesDb';
 import { setSyncMeta } from '@/lib/syncMetaDb';
-import { createGCalEvent } from '@/lib/googleCalendar';
 import { sendInstantNotification } from '@/lib/notificationService';
 
 // ---- 日付ユーティリティ ----
@@ -128,7 +127,7 @@ export async function GET(request: NextRequest) {
 }
 
 // ---- POST /api/events ----
-// 母の予定の場合、Google Calendarにも登録して google_event_id を保存する。
+// Google Calendar への反映はヘッダーの手動逆同期で行う。
 
 export async function POST(request: NextRequest) {
   let currentUser: ReturnType<typeof getCurrentUser>;
@@ -177,14 +176,6 @@ export async function POST(request: NextRequest) {
       updated_at: now,
       deleted: false,
     };
-
-    // 母の予定のみ Google Calendar にも登録（DISABLE_GOOGLE_SYNC=true の場合は停止）
-    if (currentUser.role === 'mother' && process.env.DISABLE_GOOGLE_SYNC !== 'true') {
-      const googleEventId = await createGCalEvent(event).catch(() => null);
-      if (googleEventId) {
-        event.google_event_id = googleEventId;
-      }
-    }
 
     const [startYearStr, startMonthStr] = input.start_date.split('-');
     const startYear = parseInt(startYearStr);

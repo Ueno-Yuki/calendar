@@ -3,7 +3,6 @@ import type { Event } from '@/types';
 import { getCurrentUser, AuthError } from '@/lib/auth';
 import { updateRow, appendRow, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
 import { findEventById, eventToValues } from '@/lib/eventsDb';
-import { deleteGCalEvent, updateGCalEvent } from '@/lib/googleCalendar';
 import { sendInstantNotification } from '@/lib/notificationService';
 import { setSyncMeta } from '@/lib/syncMetaDb';
 
@@ -71,7 +70,7 @@ function validateEventBody(
 }
 
 // ---- PUT /api/events/[id]?year=YYYY&month=MM ----
-// 母の予定の場合、Google Calendar も更新する。
+// Google Calendar への反映はヘッダーの手動逆同期で行う。
 
 export async function PUT(
   request: NextRequest,
@@ -129,11 +128,6 @@ export async function PUT(
       updated_at: new Date().toISOString(),
     };
 
-    // 母の予定のみ Google Calendar も更新（DISABLE_GOOGLE_SYNC=true の場合は停止）
-    if (found.event.owner === 'mother' && found.event.google_event_id && process.env.DISABLE_GOOGLE_SYNC !== 'true') {
-      updateGCalEvent(found.event.google_event_id, updated).catch(() => {});
-    }
-
     const oldMonthKey = found.event.start_date.slice(0, 7); // YYYY-MM
     const newMonthKey = input.start_date.slice(0, 7);
 
@@ -163,8 +157,7 @@ export async function PUT(
 }
 
 // ---- DELETE /api/events/[id]?year=YYYY&month=MM ----
-// 母の予定の場合、Google Calendar からも削除する。
-// Sheets 側は論理削除（deleted = TRUE）。
+// Sheets 側は論理削除（deleted = TRUE）。Google Calendar への削除反映は行わない。
 
 export async function DELETE(
   request: NextRequest,
@@ -194,11 +187,6 @@ export async function DELETE(
 
     if (found.event.owner !== currentUser.role) {
       return Response.json({ error: '他人の予定は削除できません' }, { status: 403 });
-    }
-
-    // 母の予定のみ Google Calendar からも削除（DISABLE_GOOGLE_SYNC=true の場合は停止）
-    if (found.event.owner === 'mother' && found.event.google_event_id && process.env.DISABLE_GOOGLE_SYNC !== 'true') {
-      deleteGCalEvent(found.event.google_event_id).catch(() => {});
     }
 
     const deleted: Event = {

@@ -10,7 +10,7 @@ import {
 } from '@/lib/sheets';
 import { parseEventRow, eventToValues } from '@/lib/eventsDb';
 import { getSyncMeta, setSyncMeta } from '@/lib/syncMetaDb';
-import { getAuthorizedCalendar, parseGCalEvent } from '@/lib/googleCalendar';
+import { createGCalEvent, getAuthorizedCalendar, parseGCalEvent, updateGCalEvent } from '@/lib/googleCalendar';
 
 const LAST_SYNCED_KEY = 'mother_google_calendar_last_synced_at';
 const IMPORT_COMPLETED_KEY = 'mother_google_import_completed';
@@ -87,10 +87,52 @@ export interface GoogleSyncDebugResult {
   syncedAt: string;
 }
 
+export interface GoogleReverseSyncPreviewResult {
+  ok: true;
+  timeMin: string;
+  timeMax: string;
+  createCandidates: Array<{
+    sheetEventId: string;
+    title: string;
+    startDate: string;
+    endDate: string;
+    startTime: string;
+    endTime: string;
+    allDay: boolean;
+  }>;
+  updateCandidates: Array<{
+    sheetEventId: string;
+    googleEventId: string;
+    startDate: string;
+    appTitle: string;
+    googleTitle: string;
+  }>;
+  skipped: Array<{
+    sheetEventId: string;
+    title: string;
+    startDate: string;
+    reason: string;
+  }>;
+}
+
+export interface GoogleReverseSyncResult {
+  synced: boolean;
+  created: number;
+  updated: number;
+  skipped: number;
+  syncedAt: string;
+  reason?: string;
+}
+
 // ---- 型エイリアス ----
 
 type ExistingEntry = { event: Event; sheetName: string; dataRowIndex: number };
 type GoogleSyncSelection = { eventIds?: string[]; colorIds?: string[] };
+type SheetEventEntry = { event: Event; sheetName: string; dataRowIndex: number };
+type GoogleReverseSelection = {
+  createIds: string[];
+  updatePairs: Array<{ sheetEventId: string; googleEventId: string }>;
+};
 type GoogleCategoryDefinition = {
   categoryId: string;
   label: string;
@@ -184,6 +226,26 @@ export function parseGoogleSyncSelection(colorIdsQuery: string | null, body?: un
   const eventIds = parseGoogleSyncEventIdsFromBody(body);
   if (eventIds.length > 0) return { eventIds };
   return { colorIds: parseGoogleSyncColorIds(colorIdsQuery, body) };
+}
+
+export function parseGoogleReverseSelection(body: unknown): GoogleReverseSelection {
+  if (!body || typeof body !== 'object') return { createIds: [], updatePairs: [] };
+  const record = body as { createIds?: unknown; updatePairs?: unknown };
+  const createIds = parseEventIdsParam(record.createIds);
+  const updatePairs = Array.isArray(record.updatePairs)
+    ? record.updatePairs
+        .filter((pair): pair is { sheetEventId: string; googleEventId: string } => {
+          if (!pair || typeof pair !== 'object') return false;
+          const p = pair as { sheetEventId?: unknown; googleEventId?: unknown };
+          return typeof p.sheetEventId === 'string' && typeof p.googleEventId === 'string';
+        })
+        .map((pair) => ({
+          sheetEventId: pair.sheetEventId.trim(),
+          googleEventId: pair.googleEventId.trim(),
+        }))
+        .filter((pair) => pair.sheetEventId && pair.googleEventId)
+    : [];
+  return { createIds, updatePairs };
 }
 
 // Google Calendar API の Event.colorId を同期対象判定に使う。
@@ -294,6 +356,22 @@ async function buildExistingImportKeySet(): Promise<Set<string>> {
   return set;
 }
 
+async function buildSheetEventEntryMap(): Promise<Map<string, SheetEventEntry>> {
+  const map = new Map<string, SheetEventEntry>();
+  const monthSheetNames = await getAllMonthSheetNames();
+
+  for (const sheetName of monthSheetNames) {
+    const rows = await getRows(sheetName);
+    rows.forEach((row, idx) => {
+      const event = parseEventRow(row);
+      if (!event.id) return;
+      map.set(event.id, { event, sheetName, dataRowIndex: idx });
+    });
+  }
+
+  return map;
+}
+
 // ---- append 直前再チェック ----
 // 対象シートを再読して google_event_id の存在を確認する。
 // 並行リクエストが先に append した場合をここで検知できる。
@@ -342,6 +420,89 @@ function currentJstToYearEndRange(): { timeMin: string; timeMax: string } {
   return {
     timeMin: `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+09:00`,
     timeMax: `${year + 1}-01-01T00:00:00+09:00`,
+  };
+}
+
+function isMotherEvent(event: Event): boolean {
+  return event.owner === 'mother' || event.person === 'mother';
+}
+
+function isEventInSyncRange(event: Event, range: { timeMin: string; timeMax: string }): boolean {
+  const startDate = event.start_date;
+  const rangeStartDate = range.timeMin.slice(0, 10);
+  const rangeEndDate = `${range.timeMin.slice(0, 4)}-12-31`;
+  return startDate >= rangeStartDate && startDate <= rangeEndDate;
+}
+
+function hasGoogleDiff(appEvent: Event, googleEvent: ReturnType<typeof parseGCalEvent>): boolean {
+  if (!googleEvent) return false;
+  return (
+    appEvent.title !== googleEvent.title ||
+    appEvent.start_date !== googleEvent.start_date ||
+    appEvent.end_date !== googleEvent.end_date ||
+    appEvent.start_time !== googleEvent.start_time ||
+    appEvent.end_time !== googleEvent.end_time ||
+    appEvent.all_day !== googleEvent.all_day ||
+    appEvent.location !== googleEvent.location ||
+    appEvent.memo !== googleEvent.memo
+  );
+}
+
+async function listCurrentGoogleEvents(calendar: calendar_v3.Calendar): Promise<{
+  range: { timeMin: string; timeMax: string };
+  parsedItems: Array<{ item: calendar_v3.Schema$Event; parsed: NonNullable<ReturnType<typeof parseGCalEvent>> }>;
+}> {
+  const range = currentJstToYearEndRange();
+  const items = await listGCalItems(calendar, {
+    calendarId: CALENDAR_ID(),
+    timeMin: range.timeMin,
+    timeMax: range.timeMax,
+    singleEvents: true,
+    maxResults: 2500,
+    showDeleted: false,
+  });
+
+  return {
+    range,
+    parsedItems: items
+      .map((item) => ({ item, parsed: parseGCalEvent(item) }))
+      .filter((entry): entry is { item: calendar_v3.Schema$Event; parsed: NonNullable<ReturnType<typeof parseGCalEvent>> } =>
+        Boolean(entry.item.id && entry.parsed),
+      ),
+  };
+}
+
+function buildGoogleIndexes(
+  parsedItems: Array<{ item: calendar_v3.Schema$Event; parsed: NonNullable<ReturnType<typeof parseGCalEvent>> }>,
+): {
+  byId: Map<string, NonNullable<ReturnType<typeof parseGCalEvent>>>;
+  byImportKey: Map<string, NonNullable<ReturnType<typeof parseGCalEvent>>>;
+  byStartDate: Map<string, Array<NonNullable<ReturnType<typeof parseGCalEvent>>>>;
+} {
+  const byId = new Map<string, NonNullable<ReturnType<typeof parseGCalEvent>>>();
+  const byImportKey = new Map<string, NonNullable<ReturnType<typeof parseGCalEvent>>>();
+  const byStartDate = new Map<string, Array<NonNullable<ReturnType<typeof parseGCalEvent>>>>();
+
+  parsedItems.forEach(({ item, parsed }) => {
+    if (item.id) byId.set(item.id, parsed);
+    byImportKey.set(buildImportKey(parsed.start_date, parsed.title), parsed);
+    const sameDate = byStartDate.get(parsed.start_date) ?? [];
+    sameDate.push(parsed);
+    byStartDate.set(parsed.start_date, sameDate);
+  });
+
+  return { byId, byImportKey, byStartDate };
+}
+
+function eventToReversePreviewItem(event: Event) {
+  return {
+    sheetEventId: event.id,
+    title: event.title,
+    startDate: event.start_date,
+    endDate: event.end_date,
+    startTime: event.start_time,
+    endTime: event.end_time,
+    allDay: event.all_day,
   };
 }
 
@@ -711,6 +872,203 @@ export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | Syn
       return a.label.localeCompare(b.label, 'ja');
     }),
   };
+}
+
+// ---- 逆同期プレビュー アプリ → Google ----
+// 母の予定だけを対象に、現在日時から当年末までのGoogle予定と突き合わせる。
+// 削除は扱わず、新規登録候補・更新候補・重複スキップを返す。
+
+export async function previewGoogleReverseSync(): Promise<GoogleReverseSyncPreviewResult | GoogleReverseSyncResult> {
+  if (isSyncDisabled()) {
+    return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'sync_disabled' };
+  }
+
+  const calendar = await getAuthorizedCalendar();
+  if (!calendar) {
+    return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'not_connected' };
+  }
+
+  const { range, parsedItems } = await listCurrentGoogleEvents(calendar);
+  const googleIndexes = buildGoogleIndexes(parsedItems);
+  const sheetEntries = await buildSheetEventEntryMap();
+
+  const createCandidates: GoogleReverseSyncPreviewResult['createCandidates'] = [];
+  const updateCandidates: GoogleReverseSyncPreviewResult['updateCandidates'] = [];
+  const skipped: GoogleReverseSyncPreviewResult['skipped'] = [];
+
+  for (const { event } of sheetEntries.values()) {
+    if (event.deleted || !isMotherEvent(event) || !isEventInSyncRange(event, range)) continue;
+
+    const importKey = buildImportKey(event.start_date, event.title);
+    if (event.google_event_id) {
+      const linkedGoogleEvent = googleIndexes.byId.get(event.google_event_id);
+      if (!linkedGoogleEvent) {
+        skipped.push({
+          sheetEventId: event.id,
+          title: event.title,
+          startDate: event.start_date,
+          reason: 'linked_google_event_not_found',
+        });
+        continue;
+      }
+
+      if (hasGoogleDiff(event, linkedGoogleEvent)) {
+        updateCandidates.push({
+          sheetEventId: event.id,
+          googleEventId: event.google_event_id,
+          startDate: event.start_date,
+          appTitle: event.title,
+          googleTitle: linkedGoogleEvent.title,
+        });
+      } else {
+        skipped.push({
+          sheetEventId: event.id,
+          title: event.title,
+          startDate: event.start_date,
+          reason: 'linked_google_event_unchanged',
+        });
+      }
+      continue;
+    }
+
+    if (googleIndexes.byImportKey.has(importKey)) {
+      skipped.push({
+        sheetEventId: event.id,
+        title: event.title,
+        startDate: event.start_date,
+        reason: 'same_date_title_exists',
+      });
+      continue;
+    }
+
+    const sameDateGoogleEvents = googleIndexes.byStartDate.get(event.start_date) ?? [];
+    const differentTitleEvents = sameDateGoogleEvents.filter(
+      (googleEvent) => normalizeImportTitle(googleEvent.title) !== normalizeImportTitle(event.title),
+    );
+    if (differentTitleEvents.length === 1) {
+      updateCandidates.push({
+        sheetEventId: event.id,
+        googleEventId: differentTitleEvents[0].google_event_id,
+        startDate: event.start_date,
+        appTitle: event.title,
+        googleTitle: differentTitleEvents[0].title,
+      });
+      continue;
+    }
+
+    createCandidates.push(eventToReversePreviewItem(event));
+  }
+
+  return {
+    ok: true,
+    timeMin: range.timeMin,
+    timeMax: range.timeMax,
+    createCandidates,
+    updateCandidates,
+    skipped,
+  };
+}
+
+// ---- 逆同期実行 アプリ → Google ----
+// ユーザーが選択した予定だけをGoogleへ作成・更新する。Push通知は送らない。
+
+export async function syncAppToGoogle(selection: GoogleReverseSelection): Promise<GoogleReverseSyncResult> {
+  if (isSyncDisabled()) {
+    return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'sync_disabled' };
+  }
+  const createIds = new Set(selection.createIds);
+  const updatePairs = selection.updatePairs;
+  if (createIds.size === 0 && updatePairs.length === 0) {
+    return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'no_events_selected' };
+  }
+
+  const locked = await acquireSyncLock();
+  if (!locked) {
+    return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'locked' };
+  }
+
+  try {
+    const calendar = await getAuthorizedCalendar();
+    if (!calendar) {
+      return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'not_connected' };
+    }
+
+    const { range, parsedItems } = await listCurrentGoogleEvents(calendar);
+    const googleIndexes = buildGoogleIndexes(parsedItems);
+    const sheetEntries = await buildSheetEventEntryMap();
+    const syncedAt = new Date().toISOString();
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    let sheetsChanged = 0;
+
+    for (const sheetEventId of createIds) {
+      const entry = sheetEntries.get(sheetEventId);
+      if (!entry || entry.event.deleted || !isMotherEvent(entry.event) || !isEventInSyncRange(entry.event, range)) {
+        skipped++;
+        continue;
+      }
+      if (entry.event.google_event_id || googleIndexes.byImportKey.has(buildImportKey(entry.event.start_date, entry.event.title))) {
+        skipped++;
+        continue;
+      }
+
+      const googleEventId = await createGCalEvent(entry.event);
+      if (!googleEventId) {
+        skipped++;
+        continue;
+      }
+
+      const updatedEvent: Event = {
+        ...entry.event,
+        google_event_id: googleEventId,
+        updated_at: syncedAt,
+      };
+      await updateRow(entry.sheetName, entry.dataRowIndex, eventToValues(updatedEvent));
+      googleIndexes.byImportKey.set(buildImportKey(updatedEvent.start_date, updatedEvent.title), {
+        google_event_id: googleEventId,
+        title: updatedEvent.title,
+        start_date: updatedEvent.start_date,
+        end_date: updatedEvent.end_date,
+        start_time: updatedEvent.start_time,
+        end_time: updatedEvent.end_time,
+        all_day: updatedEvent.all_day,
+        location: updatedEvent.location,
+        memo: updatedEvent.memo,
+      });
+      created++;
+      sheetsChanged++;
+    }
+
+    for (const pair of updatePairs) {
+      const entry = sheetEntries.get(pair.sheetEventId);
+      const googleEvent = googleIndexes.byId.get(pair.googleEventId);
+      if (!entry || !googleEvent || entry.event.deleted || !isMotherEvent(entry.event) || !isEventInSyncRange(entry.event, range)) {
+        skipped++;
+        continue;
+      }
+
+      await updateGCalEvent(pair.googleEventId, entry.event);
+      if (entry.event.google_event_id !== pair.googleEventId) {
+        const updatedEvent: Event = {
+          ...entry.event,
+          google_event_id: pair.googleEventId,
+          updated_at: syncedAt,
+        };
+        await updateRow(entry.sheetName, entry.dataRowIndex, eventToValues(updatedEvent));
+        sheetsChanged++;
+      }
+      updated++;
+    }
+
+    if (sheetsChanged > 0) {
+      await setSyncMeta('events_last_updated_at', new Date().toISOString());
+    }
+    await setSyncMeta(LAST_SYNCED_KEY, syncedAt);
+    return { synced: true, created, updated, skipped, syncedAt };
+  } finally {
+    await releaseSyncLock();
+  }
 }
 
 // ---- Google同期デバッグ ----

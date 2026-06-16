@@ -8,6 +8,12 @@ import type { StoredUser } from '@/lib/auth';
 import CalendarHeader from '@/components/calendar/CalendarHeader';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import DayModal from '@/components/modal/DayModal';
+import GoogleReverseSyncPreviewModal, {
+  googleReversePairKey,
+  type GoogleReverseSyncPreview,
+  type GoogleReverseUpdateCandidate,
+} from '@/components/modal/GoogleReverseSyncPreviewModal';
+import GoogleSyncModeModal from '@/components/modal/GoogleSyncModeModal';
 import GoogleSyncPreviewModal, {
   type GoogleSyncPreview,
 } from '@/components/modal/GoogleSyncPreviewModal';
@@ -71,9 +77,13 @@ export default function CalendarPage() {
   const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
   const [isGooglePreviewLoading, setIsGooglePreviewLoading] = useState(false);
   const [googleSyncDisabled, setGoogleSyncDisabled] = useState(false);
+  const [showGoogleSyncMode, setShowGoogleSyncMode] = useState(false);
   const [googleSyncPreview, setGoogleSyncPreview] = useState<GoogleSyncPreview | null>(null);
   const [selectedGoogleEventIds, setSelectedGoogleEventIds] = useState<string[]>([]);
   const [expandedGoogleCategoryIds, setExpandedGoogleCategoryIds] = useState<string[]>([]);
+  const [googleReverseSyncPreview, setGoogleReverseSyncPreview] = useState<GoogleReverseSyncPreview | null>(null);
+  const [selectedReverseCreateIds, setSelectedReverseCreateIds] = useState<string[]>([]);
+  const [selectedReverseUpdatePairKeys, setSelectedReverseUpdatePairKeys] = useState<string[]>([]);
   const [googleSyncMessage, setGoogleSyncMessage] = useState('');
   const [googleSyncError, setGoogleSyncError] = useState('');
   const [googleSyncModalError, setGoogleSyncModalError] = useState('');
@@ -357,10 +367,18 @@ export default function CalendarPage() {
     }
   }, [fetchLastUpdatedAt, isRefreshing, reloadEvents, setKnownLastUpdated]);
 
-  const handleHeaderGoogleSync = useCallback(async () => {
+  const handleHeaderGoogleSync = useCallback(() => {
     if (!canUseGoogleSync(currentRole) || googleSyncDisabled || isGooglePreviewLoading || isGoogleSyncing) return;
+    setGoogleSyncMessage('');
+    setGoogleSyncError('');
+    setGoogleSyncModalError('');
+    setShowGoogleSyncMode(true);
+  }, [currentRole, googleSyncDisabled, isGooglePreviewLoading, isGoogleSyncing]);
 
+  const handleImportGoogleSyncRequest = useCallback(async () => {
+    if (!canUseGoogleSync(currentRole) || googleSyncDisabled || isGooglePreviewLoading || isGoogleSyncing) return;
     setIsGooglePreviewLoading(true);
+    setShowGoogleSyncMode(false);
     setGoogleSyncMessage('');
     setGoogleSyncError('');
     setGoogleSyncModalError('');
@@ -395,6 +413,49 @@ export default function CalendarPage() {
       }
     } catch {
       setGoogleSyncError('同期プレビューに失敗しました');
+    } finally {
+      setIsGooglePreviewLoading(false);
+    }
+  }, [currentRole, googleSyncDisabled, isGooglePreviewLoading, isGoogleSyncing]);
+
+  const handleReverseGoogleSyncRequest = useCallback(async () => {
+    if (!canUseGoogleSync(currentRole) || googleSyncDisabled || isGooglePreviewLoading || isGoogleSyncing) return;
+    setIsGooglePreviewLoading(true);
+    setShowGoogleSyncMode(false);
+    setGoogleSyncMessage('');
+    setGoogleSyncError('');
+    setGoogleSyncModalError('');
+    try {
+      const res = await apiFetch('/api/sync/google/reverse/preview');
+      const data = (await res.json().catch(() => null)) as
+        | GoogleReverseSyncPreview
+        | { reason?: string }
+        | null;
+
+      if (!res.ok) {
+        const reason = data && 'reason' in data ? data.reason : undefined;
+        setGoogleSyncError(reason === 'forbidden' ? '同期権限がありません' : '逆同期プレビューに失敗しました');
+        return;
+      }
+
+      if (data && 'reason' in data && data.reason === 'sync_disabled') {
+        setGoogleSyncError('Google同期は停止中です');
+        return;
+      }
+      if (data && 'reason' in data && data.reason === 'not_connected') {
+        setGoogleSyncError('Googleカレンダーが未連携です');
+        return;
+      }
+
+      if (data && 'ok' in data && data.ok) {
+        setGoogleReverseSyncPreview(data);
+        setSelectedReverseCreateIds([]);
+        setSelectedReverseUpdatePairKeys([]);
+      } else {
+        setGoogleSyncError('逆同期プレビューに失敗しました');
+      }
+    } catch {
+      setGoogleSyncError('逆同期プレビューに失敗しました');
     } finally {
       setIsGooglePreviewLoading(false);
     }
@@ -439,6 +500,31 @@ export default function CalendarPage() {
     setGoogleSyncPreview(null);
     setSelectedGoogleEventIds([]);
     setExpandedGoogleCategoryIds([]);
+    setGoogleSyncModalError('');
+  }, [isGoogleSyncing]);
+
+  const handleToggleReverseCreate = useCallback((sheetEventId: string) => {
+    setSelectedReverseCreateIds((current) =>
+      current.includes(sheetEventId)
+        ? current.filter((id) => id !== sheetEventId)
+        : [...current, sheetEventId],
+    );
+  }, []);
+
+  const handleToggleReverseUpdate = useCallback((pair: GoogleReverseUpdateCandidate) => {
+    const key = googleReversePairKey(pair);
+    setSelectedReverseUpdatePairKeys((current) =>
+      current.includes(key)
+        ? current.filter((id) => id !== key)
+        : [...current, key],
+    );
+  }, []);
+
+  const handleCloseReverseGooglePreview = useCallback(() => {
+    if (isGoogleSyncing) return;
+    setGoogleReverseSyncPreview(null);
+    setSelectedReverseCreateIds([]);
+    setSelectedReverseUpdatePairKeys([]);
     setGoogleSyncModalError('');
   }, [isGoogleSyncing]);
 
@@ -487,6 +573,64 @@ export default function CalendarPage() {
       setIsGoogleSyncing(false);
     }
   }, [isGoogleSyncing, refreshKnownLastUpdated, reloadEvents, selectedGoogleEventIds]);
+
+  const handleConfirmReverseGoogleSync = useCallback(async () => {
+    if (!googleReverseSyncPreview || isGoogleSyncing) return;
+    const selectedUpdatePairs = googleReverseSyncPreview.updateCandidates.filter((pair) =>
+      selectedReverseUpdatePairKeys.includes(googleReversePairKey(pair)),
+    );
+    if (selectedReverseCreateIds.length === 0 && selectedUpdatePairs.length === 0) return;
+
+    setIsGoogleSyncing(true);
+    setGoogleSyncModalError('');
+    setGoogleSyncMessage('');
+    setGoogleSyncError('');
+    try {
+      const res = await apiFetch('/api/sync/google/reverse', {
+        method: 'POST',
+        body: JSON.stringify({
+          createIds: selectedReverseCreateIds,
+          updatePairs: selectedUpdatePairs.map((pair) => ({
+            sheetEventId: pair.sheetEventId,
+            googleEventId: pair.googleEventId,
+          })),
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as { reason?: string } | null;
+
+      if (!res.ok) {
+        setGoogleSyncModalError(data?.reason === 'no_events_selected' ? '反映する予定を選択してください' : 'Googleへの反映に失敗しました');
+        return;
+      }
+      if (data?.reason === 'sync_disabled') {
+        setGoogleSyncModalError('Google同期は停止中です');
+        return;
+      }
+      if (data?.reason === 'not_connected') {
+        setGoogleSyncModalError('Googleカレンダーが未連携です');
+        return;
+      }
+
+      setGoogleSyncMessage('Googleへ反映しました');
+      setGoogleReverseSyncPreview(null);
+      setSelectedReverseCreateIds([]);
+      setSelectedReverseUpdatePairKeys([]);
+      await reloadEvents();
+      setHasRemoteUpdates(false);
+      refreshKnownLastUpdated();
+    } catch {
+      setGoogleSyncModalError('Googleへの反映に失敗しました');
+    } finally {
+      setIsGoogleSyncing(false);
+    }
+  }, [
+    googleReverseSyncPreview,
+    isGoogleSyncing,
+    refreshKnownLastUpdated,
+    reloadEvents,
+    selectedReverseCreateIds,
+    selectedReverseUpdatePairKeys,
+  ]);
 
   if (authError) {
     return (
@@ -564,14 +708,29 @@ export default function CalendarPage() {
           onConfirm={handleConfirmGoogleSync}
         />
       )}
-      {showSettings && (
-        <SettingsModal
-          onClose={() => setShowSettings(false)}
-          onGoogleSyncRequest={() => {
-            setShowSettings(false);
-            void handleHeaderGoogleSync();
-          }}
+      {showGoogleSyncMode && (
+        <GoogleSyncModeModal
+          loading={isGooglePreviewLoading || isGoogleSyncing}
+          onClose={() => setShowGoogleSyncMode(false)}
+          onImport={handleImportGoogleSyncRequest}
+          onReverse={handleReverseGoogleSyncRequest}
         />
+      )}
+      {googleReverseSyncPreview && (
+        <GoogleReverseSyncPreviewModal
+          preview={googleReverseSyncPreview}
+          selectedCreateIds={selectedReverseCreateIds}
+          selectedUpdatePairKeys={selectedReverseUpdatePairKeys}
+          syncing={isGoogleSyncing}
+          error={googleSyncModalError}
+          onToggleCreate={handleToggleReverseCreate}
+          onToggleUpdate={handleToggleReverseUpdate}
+          onClose={handleCloseReverseGooglePreview}
+          onConfirm={handleConfirmReverseGoogleSync}
+        />
+      )}
+      {showSettings && (
+        <SettingsModal onClose={() => setShowSettings(false)} />
       )}
       {showYearMonthPicker && (
         <YearMonthPickerModal
