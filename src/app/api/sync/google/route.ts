@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { getCurrentUser, AuthError } from '@/lib/auth';
 import { getSyncMeta } from '@/lib/syncMetaDb';
-import { debugGoogleSync, parseGoogleSyncColorIds, syncGoogleToApp } from '@/lib/googleCalendarSync';
+import { debugGoogleSync, parseGoogleSyncSelection, syncGoogleToApp } from '@/lib/googleCalendarSync';
 
 const LAST_SYNCED_KEY = 'mother_google_calendar_last_synced_at';
 const SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10分
@@ -39,9 +39,9 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => null);
-  const colorIds = parseGoogleSyncColorIds(request.nextUrl.searchParams.get('colorIds'), body);
-  if (colorIds.length === 0) {
-    return Response.json({ synced: false, reason: 'no_color_selected' }, { status: 400 });
+  const selection = parseGoogleSyncSelection(request.nextUrl.searchParams.get('colorIds'), body);
+  if ((selection.eventIds?.length ?? selection.colorIds?.length ?? 0) === 0) {
+    return Response.json({ synced: false, reason: 'no_events_selected' }, { status: 400 });
   }
 
   const force = request.nextUrl.searchParams.get('force') === 'true';
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await syncGoogleToApp(colorIds);
+    const result = await syncGoogleToApp(selection);
     return Response.json(result);
   } catch {
     return Response.json({ synced: false, reason: 'error' }, { status: 500 });

@@ -1,12 +1,26 @@
 'use client';
 
-import { X } from 'lucide-react';
+import { ChevronDown, X } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 
-export interface GoogleSyncColorGroup {
+export interface GoogleSyncPreviewEvent {
+  googleEventId: string;
+  title: string;
+  start: string;
+  end: string;
+  startTime: string;
+  endTime: string;
+  allDay: boolean;
   colorId: string;
+}
+
+export interface GoogleSyncCategory {
+  categoryId: string;
   label: string;
+  icon: string;
+  colorIds: string[];
   count: number;
-  samples: string[];
+  events: GoogleSyncPreviewEvent[];
 }
 
 export interface GoogleSyncPreview {
@@ -16,15 +30,18 @@ export interface GoogleSyncPreview {
   totalFetched: number;
   validEvents: number;
   cancelled: number;
-  colorGroups: GoogleSyncColorGroup[];
+  categories: GoogleSyncCategory[];
 }
 
 interface Props {
   preview: GoogleSyncPreview;
-  selectedColorIds: string[];
+  selectedEventIds: string[];
+  expandedCategoryIds: string[];
   syncing: boolean;
   error: string;
-  onToggleColor: (colorId: string) => void;
+  onToggleCategory: (categoryId: string) => void;
+  onToggleCategoryExpanded: (categoryId: string) => void;
+  onToggleEvent: (googleEventId: string) => void;
   onClose: () => void;
   onConfirm: () => void;
 }
@@ -64,17 +81,59 @@ function formatExclusiveEndDate(value: string): string {
   return formatDate(new Date(date.getTime() - 1).toISOString());
 }
 
+function formatEventDate(event: GoogleSyncPreviewEvent): string {
+  const start = formatDate(event.start);
+  const end = formatDate(event.end);
+  if (event.start !== event.end) return `${start}〜${end}`;
+  if (event.allDay) return start;
+  return `${start} ${event.startTime}${event.endTime ? `〜${event.endTime}` : ''}`;
+}
+
+function CategoryCheckbox({
+  checked,
+  indeterminate,
+  disabled,
+  onChange,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  disabled: boolean;
+  onChange: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      onClick={(event) => event.stopPropagation()}
+      disabled={disabled}
+      className="mt-1 h-4 w-4 rounded border-zinc-300 text-zinc-900"
+    />
+  );
+}
+
 export default function GoogleSyncPreviewModal({
   preview,
-  selectedColorIds,
+  selectedEventIds,
+  expandedCategoryIds,
   syncing,
   error,
-  onToggleColor,
+  onToggleCategory,
+  onToggleCategoryExpanded,
+  onToggleEvent,
   onClose,
   onConfirm,
 }: Props) {
-  const selectedSet = new Set(selectedColorIds);
-  const canConfirm = selectedColorIds.length > 0 && !syncing;
+  const selectedSet = new Set(selectedEventIds);
+  const expandedSet = new Set(expandedCategoryIds);
+  const canConfirm = selectedEventIds.length > 0 && !syncing;
 
   return (
     <>
@@ -113,8 +172,8 @@ export default function GoogleSyncPreviewModal({
               <p className="text-sm font-semibold text-zinc-800">{preview.validEvents}件</p>
             </div>
             <div className="rounded-lg bg-zinc-50 px-2 py-2">
-              <p className="text-[11px] text-zinc-400">取得総数</p>
-              <p className="text-sm font-semibold text-zinc-800">{preview.totalFetched}件</p>
+              <p className="text-[11px] text-zinc-400">選択中</p>
+              <p className="text-sm font-semibold text-zinc-800">{selectedEventIds.length}件</p>
             </div>
             <div className="rounded-lg bg-zinc-50 px-2 py-2">
               <p className="text-[11px] text-zinc-400">削除済み</p>
@@ -123,33 +182,75 @@ export default function GoogleSyncPreviewModal({
           </div>
 
           <div className="mt-4 divide-y divide-zinc-100 rounded-xl border border-zinc-100">
-            {preview.colorGroups.length === 0 ? (
+            {preview.categories.length === 0 ? (
               <p className="px-4 py-5 text-center text-sm text-zinc-400">取り込み候補がありません</p>
             ) : (
-              preview.colorGroups.map((group) => (
-                <label
-                  key={group.colorId}
-                  className="flex items-start gap-3 px-4 py-3 active:bg-zinc-50"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedSet.has(group.colorId)}
-                    onChange={() => onToggleColor(group.colorId)}
-                    disabled={syncing}
-                    className="mt-1 h-4 w-4 rounded border-zinc-300 text-zinc-900"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium text-zinc-800">
-                      {group.label} {group.count}件
-                    </span>
-                    {group.samples.length > 0 && (
-                      <span className="mt-1 block truncate text-xs text-zinc-400">
-                        例: {group.samples.join('、')}
+              preview.categories.map((category) => {
+                const categoryEventIds = category.events.map((event) => event.googleEventId);
+                const selectedCount = categoryEventIds.filter((id) => selectedSet.has(id)).length;
+                const checked = selectedCount === categoryEventIds.length && categoryEventIds.length > 0;
+                const indeterminate = selectedCount > 0 && selectedCount < categoryEventIds.length;
+                const expanded = expandedSet.has(category.categoryId);
+                const samples = category.events.slice(0, 3).map((event) => event.title);
+
+                return (
+                  <div key={category.categoryId}>
+                    <div className="flex items-start gap-3 px-4 py-3 active:bg-zinc-50">
+                      <CategoryCheckbox
+                        checked={checked}
+                        indeterminate={indeterminate}
+                        disabled={syncing}
+                        onChange={() => onToggleCategory(category.categoryId)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onToggleCategoryExpanded(category.categoryId)}
+                        disabled={syncing}
+                        className="flex min-w-0 flex-1 items-start gap-2 text-left disabled:opacity-60"
+                      >
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium text-zinc-800">
+                          {category.icon && <span className="mr-1">{category.icon}</span>}
+                          {category.label} {category.count}件
+                        </span>
+                        {samples.length > 0 && !expanded && (
+                          <span className="mt-1 block truncate text-xs text-zinc-400">
+                            例: {samples.join('、')}
+                          </span>
+                        )}
                       </span>
+                      <ChevronDown
+                        size={16}
+                        className={`mt-1 shrink-0 text-zinc-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                      />
+                      </button>
+                    </div>
+
+                    {expanded && (
+                      <div className="space-y-1 bg-zinc-50 px-4 pb-3 pl-11">
+                        {category.events.map((event) => (
+                          <label
+                            key={event.googleEventId}
+                            className="flex items-center gap-2 rounded-lg px-2 py-2 active:bg-white"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedSet.has(event.googleEventId)}
+                              onChange={() => onToggleEvent(event.googleEventId)}
+                              disabled={syncing}
+                              className="h-4 w-4 rounded border-zinc-300 text-zinc-900"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm text-zinc-700">{event.title}</span>
+                              <span className="block text-xs text-zinc-400">{formatEventDate(event)}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
                     )}
-                  </span>
-                </label>
-              ))
+                  </div>
+                );
+              })
             )}
           </div>
 

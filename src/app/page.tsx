@@ -72,7 +72,8 @@ export default function CalendarPage() {
   const [isGooglePreviewLoading, setIsGooglePreviewLoading] = useState(false);
   const [googleSyncDisabled, setGoogleSyncDisabled] = useState(false);
   const [googleSyncPreview, setGoogleSyncPreview] = useState<GoogleSyncPreview | null>(null);
-  const [selectedGoogleColorIds, setSelectedGoogleColorIds] = useState<string[]>([]);
+  const [selectedGoogleEventIds, setSelectedGoogleEventIds] = useState<string[]>([]);
+  const [expandedGoogleCategoryIds, setExpandedGoogleCategoryIds] = useState<string[]>([]);
   const [googleSyncMessage, setGoogleSyncMessage] = useState('');
   const [googleSyncError, setGoogleSyncError] = useState('');
   const [googleSyncModalError, setGoogleSyncModalError] = useState('');
@@ -387,7 +388,8 @@ export default function CalendarPage() {
 
       if (data && 'ok' in data && data.ok) {
         setGoogleSyncPreview(data);
-        setSelectedGoogleColorIds([]);
+        setSelectedGoogleEventIds([]);
+        setExpandedGoogleCategoryIds([]);
       } else {
         setGoogleSyncError('同期プレビューに失敗しました');
       }
@@ -398,23 +400,50 @@ export default function CalendarPage() {
     }
   }, [currentRole, googleSyncDisabled, isGooglePreviewLoading, isGoogleSyncing]);
 
-  const handleToggleGoogleColor = useCallback((colorId: string) => {
-    setSelectedGoogleColorIds((current) =>
-      current.includes(colorId)
-        ? current.filter((id) => id !== colorId)
-        : [...current, colorId],
+  const handleToggleGoogleCategory = useCallback((categoryId: string) => {
+    if (!googleSyncPreview) return;
+    const category = googleSyncPreview.categories.find((item) => item.categoryId === categoryId);
+    if (!category) return;
+    const categoryEventIds = category.events.map((event) => event.googleEventId);
+
+    setSelectedGoogleEventIds((current) => {
+      const currentSet = new Set(current);
+      const allSelected = categoryEventIds.every((id) => currentSet.has(id));
+      if (allSelected) {
+        categoryEventIds.forEach((id) => currentSet.delete(id));
+      } else {
+        categoryEventIds.forEach((id) => currentSet.add(id));
+      }
+      return [...currentSet];
+    });
+  }, [googleSyncPreview]);
+
+  const handleToggleGoogleCategoryExpanded = useCallback((categoryId: string) => {
+    setExpandedGoogleCategoryIds((current) =>
+      current.includes(categoryId)
+        ? current.filter((id) => id !== categoryId)
+        : [...current, categoryId],
+    );
+  }, []);
+
+  const handleToggleGoogleEvent = useCallback((googleEventId: string) => {
+    setSelectedGoogleEventIds((current) =>
+      current.includes(googleEventId)
+        ? current.filter((id) => id !== googleEventId)
+        : [...current, googleEventId],
     );
   }, []);
 
   const handleCloseGooglePreview = useCallback(() => {
     if (isGoogleSyncing) return;
     setGoogleSyncPreview(null);
-    setSelectedGoogleColorIds([]);
+    setSelectedGoogleEventIds([]);
+    setExpandedGoogleCategoryIds([]);
     setGoogleSyncModalError('');
   }, [isGoogleSyncing]);
 
   const handleConfirmGoogleSync = useCallback(async () => {
-    if (selectedGoogleColorIds.length === 0 || isGoogleSyncing) return;
+    if (selectedGoogleEventIds.length === 0 || isGoogleSyncing) return;
 
     setIsGoogleSyncing(true);
     setGoogleSyncModalError('');
@@ -423,12 +452,12 @@ export default function CalendarPage() {
     try {
       const res = await apiFetch('/api/sync/google', {
         method: 'POST',
-        body: JSON.stringify({ colorIds: selectedGoogleColorIds }),
+        body: JSON.stringify({ eventIds: selectedGoogleEventIds }),
       });
       const data = (await res.json().catch(() => null)) as { reason?: string } | null;
 
       if (!res.ok) {
-        setGoogleSyncModalError(data?.reason === 'no_color_selected' ? '取り込む色を選択してください' : 'Google同期に失敗しました');
+        setGoogleSyncModalError(data?.reason === 'no_events_selected' ? '取り込む予定を選択してください' : 'Google同期に失敗しました');
         return;
       }
 
@@ -447,7 +476,8 @@ export default function CalendarPage() {
       }
 
       setGoogleSyncPreview(null);
-      setSelectedGoogleColorIds([]);
+      setSelectedGoogleEventIds([]);
+      setExpandedGoogleCategoryIds([]);
       await reloadEvents();
       setHasRemoteUpdates(false);
       refreshKnownLastUpdated();
@@ -456,7 +486,7 @@ export default function CalendarPage() {
     } finally {
       setIsGoogleSyncing(false);
     }
-  }, [isGoogleSyncing, refreshKnownLastUpdated, reloadEvents, selectedGoogleColorIds]);
+  }, [isGoogleSyncing, refreshKnownLastUpdated, reloadEvents, selectedGoogleEventIds]);
 
   if (authError) {
     return (
@@ -523,10 +553,13 @@ export default function CalendarPage() {
       {googleSyncPreview && (
         <GoogleSyncPreviewModal
           preview={googleSyncPreview}
-          selectedColorIds={selectedGoogleColorIds}
+          selectedEventIds={selectedGoogleEventIds}
+          expandedCategoryIds={expandedGoogleCategoryIds}
           syncing={isGoogleSyncing}
           error={googleSyncModalError}
-          onToggleColor={handleToggleGoogleColor}
+          onToggleCategory={handleToggleGoogleCategory}
+          onToggleCategoryExpanded={handleToggleGoogleCategoryExpanded}
+          onToggleEvent={handleToggleGoogleEvent}
           onClose={handleCloseGooglePreview}
           onConfirm={handleConfirmGoogleSync}
         />

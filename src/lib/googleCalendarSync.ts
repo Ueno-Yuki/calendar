@@ -40,11 +40,22 @@ export interface GoogleSyncPreviewResult {
   totalFetched: number;
   validEvents: number;
   cancelled: number;
-  colorGroups: Array<{
-    colorId: string;
+  categories: Array<{
+    categoryId: string;
     label: string;
+    icon: string;
+    colorIds: string[];
     count: number;
-    samples: string[];
+    events: Array<{
+      googleEventId: string;
+      title: string;
+      start: string;
+      end: string;
+      startTime: string;
+      endTime: string;
+      allDay: boolean;
+      colorId: string;
+    }>;
   }>;
 }
 
@@ -74,6 +85,35 @@ export interface GoogleSyncDebugResult {
 // ---- 型エイリアス ----
 
 type ExistingEntry = { event: Event; sheetName: string; dataRowIndex: number };
+type GoogleSyncSelection = { eventIds?: string[]; colorIds?: string[] };
+type GoogleCategoryDefinition = {
+  categoryId: string;
+  label: string;
+  icon: string;
+  colorIds: string[];
+};
+
+const GOOGLE_CATEGORY_DEFINITIONS: GoogleCategoryDefinition[] = [
+  { categoryId: 'salon', label: 'サロン', icon: '🟦', colorIds: ['default'] },
+  { categoryId: 'birthday', label: '誕生日', icon: '🎂', colorIds: ['10', '3'] },
+  { categoryId: 'personal', label: '個人の予定', icon: '🟪', colorIds: ['11'] },
+  { categoryId: 'kappa', label: 'かっぱ', icon: '🟨', colorIds: ['5'] },
+];
+
+const GOOGLE_CATEGORY_BY_COLOR_ID = new Map<string, GoogleCategoryDefinition>(
+  GOOGLE_CATEGORY_DEFINITIONS.flatMap((category) =>
+    category.colorIds.map((colorId) => [colorId, category] as const),
+  ),
+);
+
+function getGoogleCategory(colorId: string): GoogleCategoryDefinition {
+  return GOOGLE_CATEGORY_BY_COLOR_ID.get(colorId) ?? {
+    categoryId: `color-${colorId}`,
+    label: getColorLabel(colorId),
+    icon: '',
+    colorIds: [colorId],
+  };
+}
 
 function normalizeColorIds(colorIds: string[] | undefined): string[] {
   if (!colorIds) {
@@ -99,9 +139,19 @@ function parseColorIdsParam(value: unknown): string[] {
   return value.filter((id): id is string => typeof id === 'string').map((id) => id.trim()).filter(Boolean);
 }
 
+function parseEventIdsParam(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is string => typeof id === 'string').map((id) => id.trim()).filter(Boolean);
+}
+
 export function parseGoogleSyncColorIdsFromBody(body: unknown): string[] {
   if (!body || typeof body !== 'object') return [];
   return parseColorIdsParam((body as { colorIds?: unknown }).colorIds);
+}
+
+export function parseGoogleSyncEventIdsFromBody(body: unknown): string[] {
+  if (!body || typeof body !== 'object') return [];
+  return parseEventIdsParam((body as { eventIds?: unknown }).eventIds);
 }
 
 function parseGoogleSyncColorIdsFromQuery(value: string | null): string[] {
@@ -115,6 +165,12 @@ export function parseGoogleSyncColorIds(value: string | null, body?: unknown): s
   const bodyIds = parseGoogleSyncColorIdsFromBody(body);
   if (bodyIds.length > 0) return bodyIds;
   return parseGoogleSyncColorIdsFromQuery(value);
+}
+
+export function parseGoogleSyncSelection(colorIdsQuery: string | null, body?: unknown): GoogleSyncSelection {
+  const eventIds = parseGoogleSyncEventIdsFromBody(body);
+  if (eventIds.length > 0) return { eventIds };
+  return { colorIds: parseGoogleSyncColorIds(colorIdsQuery, body) };
 }
 
 // Google Calendar API の Event.colorId を同期対象判定に使う。
@@ -370,13 +426,14 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
 // Google同期由来の追加・更新・削除は即時Push通知と notification_logs の対象外。
 // 差分があった場合のみ events_last_updated_at を更新し、他端末の更新バッジに反映する。
 
-export async function syncGoogleToApp(colorIds: string[]): Promise<SyncResult> {
+export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<SyncResult> {
   if (isSyncDisabled()) {
     return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'sync_disabled' };
   }
-  const syncColorIds = getRequiredSyncColorIdSet(colorIds);
-  if (syncColorIds.size === 0) {
-    return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'no_color_selected' };
+  const syncEventIds = selection.eventIds ? new Set(selection.eventIds.map((id) => id.trim()).filter(Boolean)) : null;
+  const syncColorIds = syncEventIds ? null : getRequiredSyncColorIdSet(selection.colorIds ?? []);
+  if (syncEventIds?.size === 0 || (!syncEventIds && syncColorIds?.size === 0)) {
+    return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'no_events_selected' };
   }
 
   // ロック取得: 並行リクエストによる重複 append を防ぐ
@@ -414,12 +471,13 @@ export async function syncGoogleToApp(colorIds: string[]): Promise<SyncResult> {
       if (!item.id) continue;
       if (processedIds.has(item.id)) continue;
       processedIds.add(item.id);
+      if (syncEventIds && !syncEventIds.has(item.id)) continue;
 
       const existing = existingMap.get(item.id);
 
       if (item.status === 'cancelled') {
         const cancelledColorId = item.colorId ?? existing?.event.google_color_id ?? '';
-        if (!cancelledColorId || !syncColorIds.has(cancelledColorId)) continue;
+        if (!syncEventIds && (!cancelledColorId || !syncColorIds?.has(cancelledColorId))) continue;
         // Google 側で削除 → アプリ側も論理削除
         if (existing && !existing.event.deleted) {
           const deletedEvent: Event = { ...existing.event, deleted: true, updated_at: syncedAt };
@@ -431,7 +489,7 @@ export async function syncGoogleToApp(colorIds: string[]): Promise<SyncResult> {
         continue;
       }
 
-      if (!isIncludedByColor(item, syncColorIds)) continue;
+      if (!syncEventIds && !isIncludedByColor(item, syncColorIds)) continue;
       const parsed = parseGCalEvent(item);
       if (!parsed) continue;
       const googleColorId = getEventColorId(item);
@@ -544,8 +602,8 @@ export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | Syn
     showDeleted: true,
   });
 
-  type ColorGroup = { colorId: string; label: string; count: number; samples: string[] };
-  const groups = new Map<string, ColorGroup>();
+  type CategoryGroup = GoogleSyncPreviewResult['categories'][number];
+  const groups = new Map<string, CategoryGroup>();
   let validEvents = 0;
   let cancelled = 0;
 
@@ -554,21 +612,32 @@ export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | Syn
       cancelled++;
       continue;
     }
-    if (!parseGCalEvent(item)) continue;
+    const parsed = parseGCalEvent(item);
+    if (!parsed || !item.id) continue;
 
     validEvents++;
     const colorId = getEventColorId(item);
-    const group = groups.get(colorId) ?? {
-      colorId,
-      label: getColorLabel(colorId),
+    const category = getGoogleCategory(colorId);
+    const group = groups.get(category.categoryId) ?? {
+      categoryId: category.categoryId,
+      label: category.label,
+      icon: category.icon,
+      colorIds: category.colorIds,
       count: 0,
-      samples: [],
+      events: [],
     };
     group.count++;
-    if (group.samples.length < 3) {
-      group.samples.push(item.summary ?? '(タイトルなし)');
-    }
-    groups.set(colorId, group);
+    group.events.push({
+      googleEventId: item.id,
+      title: parsed.title,
+      start: parsed.start_date,
+      end: parsed.end_date,
+      startTime: parsed.start_time,
+      endTime: parsed.end_time,
+      allDay: parsed.all_day,
+      colorId,
+    });
+    groups.set(category.categoryId, group);
   }
 
   return {
@@ -578,10 +647,15 @@ export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | Syn
     totalFetched: items.length,
     validEvents,
     cancelled,
-    colorGroups: [...groups.values()].sort((a, b) => {
-      if (a.colorId === 'default') return -1;
-      if (b.colorId === 'default') return 1;
-      return a.colorId.localeCompare(b.colorId, 'ja');
+    categories: [...groups.values()].sort((a, b) => {
+      const aIndex = GOOGLE_CATEGORY_DEFINITIONS.findIndex((category) => category.categoryId === a.categoryId);
+      const bIndex = GOOGLE_CATEGORY_DEFINITIONS.findIndex((category) => category.categoryId === b.categoryId);
+      if (aIndex !== -1 || bIndex !== -1) {
+        if (aIndex === -1) return 1;
+        if (bIndex === -1) return -1;
+        return aIndex - bIndex;
+      }
+      return a.label.localeCompare(b.label, 'ja');
     }),
   };
 }
