@@ -405,22 +405,18 @@ export default function EventCreateForm({
           <div className="flex items-center">
             <span className="text-sm text-zinc-500 shrink-0">終了</span>
             <div className="ml-auto flex items-center gap-2">
+              {showLastOption && !allDay && (
+                <LastToggleChip
+                  checked={isLast}
+                  onClick={() => setIsLast((current) => !current)}
+                />
+              )}
               <DateButton value={endDate} min={startDate} onChange={setEndDate} label="終了日" />
-              {!allDay && (
-                <>
-                  <TimeButton
-                    value={isLast ? 'ラスト' : endTime}
-                    isLast={isLast}
-                    onClick={() => setTimePickerFor('end')}
-                  />
-                  {showLastOption && !isLast && (
-                    <TimeButton
-                      value="ラスト"
-                      isLast
-                      onClick={() => setIsLast(true)}
-                    />
-                  )}
-                </>
+              {!allDay && !isLast && (
+                <TimeButton
+                  value={endTime}
+                  onClick={() => setTimePickerFor('end')}
+                />
               )}
             </div>
           </div>
@@ -563,6 +559,37 @@ function TimeButton({ value, isLast = false, onClick }: TimeButtonProps) {
       }`}
     >
       {value}
+    </button>
+  );
+}
+
+interface LastToggleChipProps {
+  checked: boolean;
+  onClick: () => void;
+}
+
+function LastToggleChip({ checked, onClick }: LastToggleChipProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={checked}
+      className={`shrink-0 inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold ${
+        checked
+          ? 'bg-zinc-800 text-white'
+          : 'bg-zinc-100 text-zinc-600'
+      }`}
+    >
+      <span>ラスト</span>
+      <span
+        className={`rounded-full px-1.5 py-0.5 text-[10px] leading-none ${
+          checked
+            ? 'bg-white/20 text-white'
+            : 'bg-white text-zinc-500'
+        }`}
+      >
+        {checked ? 'ON' : 'OFF'}
+      </span>
     </button>
   );
 }
