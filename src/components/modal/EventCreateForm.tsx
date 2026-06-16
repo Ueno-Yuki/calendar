@@ -119,9 +119,11 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
   };
 
   const applyTemplate = (template: EventTemplate) => {
+    setTitle(template.title);
     if (template.start_time) setStartTime(template.start_time);
     if (template.end_time) {
-      if (template.end_time === KAPPA_LAST_END_TIME && showLastOption) {
+      const templateSupportsLast = currentRole === 'mother' && isKappaTitle(template.title);
+      if (template.end_time === KAPPA_LAST_END_TIME && templateSupportsLast) {
         setIsLast(true);
       } else {
         setEndTime(template.end_time);
@@ -299,8 +301,14 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
                     {/* 候補削除ボタン */}
                     <button
                       type="button"
-                      onPointerDown={(e) => e.preventDefault()}
-                      onClick={() => handleDeleteTemplate(s.id)}
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteTemplate(s.id);
+                      }}
                       aria-label="候補を削除"
                       className="flex items-center justify-center h-11 w-11 shrink-0 text-red-400 active:text-red-600"
                     >
