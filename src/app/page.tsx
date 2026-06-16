@@ -49,6 +49,8 @@ export default function CalendarPage() {
   // refでクロージャ内から最新状態を参照する
   const selectedDateRef = useRef<string | null>(null);
   const isSyncingRef = useRef(false);
+  // undefined = 未初期化, null = サーバー未設定, string = ISO日時
+  const knownLastUpdatedAtRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     selectedDateRef.current = selectedDate;
@@ -107,6 +109,19 @@ export default function CalendarPage() {
   const cacheRef = useRef<Record<string, Event[]>>({});
   const prevRefreshKeyRef = useRef(0);
   const hasLoadedRef = useRef(false);
+
+  // 自分の操作後に knownLastUpdatedAt をサーバーと同期し、次のポーリングで誤検知しないようにする
+  const refreshKnownLastUpdated = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/events/last-updated');
+      if (res.ok) {
+        const data = (await res.json()) as { lastUpdatedAt: string | null };
+        knownLastUpdatedAtRef.current = data.lastUpdatedAt;
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // バックグラウンド同期（POST /api/sync/google）
   // 完了後: 入力中でなければ即リロード、入力中なら保留バナーを表示
@@ -187,6 +202,63 @@ export default function CalendarPage() {
     };
   }, [year, month, refreshKey, runGoogleSync]);
 
+  // 30秒ポーリング: 他の家族の予定変更を検知してリロードまたは保留する
+  useEffect(() => {
+    if (authError || loading) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      if (cancelled || document.hidden) return;
+      try {
+        const res = await apiFetch('/api/events/last-updated');
+        if (!res.ok || cancelled) return;
+        const { lastUpdatedAt } = (await res.json()) as { lastUpdatedAt: string | null };
+
+        // 初回ポーリング: 現在値を記録するだけ
+        if (knownLastUpdatedAtRef.current === undefined) {
+          knownLastUpdatedAtRef.current = lastUpdatedAt;
+          return;
+        }
+
+        // 更新検知: null でなく、既知値より新しい場合のみ
+        const isNewer =
+          lastUpdatedAt !== null &&
+          lastUpdatedAt !== knownLastUpdatedAtRef.current &&
+          (knownLastUpdatedAtRef.current === null || lastUpdatedAt > knownLastUpdatedAtRef.current);
+
+        if (!isNewer) return;
+        knownLastUpdatedAtRef.current = lastUpdatedAt;
+
+        if (selectedDateRef.current) {
+          // DayModal 表示中 → 保留
+          setHasPendingRefresh(true);
+          setShowUpdateBanner(true);
+        } else {
+          // 通常時 → 即リロード（バナーなし）
+          setRefreshKey((k) => k + 1);
+        }
+      } catch {
+        // ネットワークエラー等は無視
+      }
+    };
+
+    const intervalId = setInterval(poll, 30_000);
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) poll(); // タブ復帰時に即ポーリング
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    poll(); // 起動直後に初回ポーリング
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [authError, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const goPrevMonth = () =>
     setYearMonth(({ year: y, month: m }) =>
       m === 1 ? { year: y - 1, month: 12 } : { year: y, month: m - 1 },
@@ -208,16 +280,19 @@ export default function CalendarPage() {
   };
 
   // 予定保存・削除後: リロード & 保留状態リセット
+  // refreshKnownLastUpdated で自分の操作を knownLastUpdatedAt に反映し、次のポーリングで二重リロードしない
   const handleEventCreated = () => {
     setRefreshKey((k) => k + 1);
     setHasPendingRefresh(false);
     setShowUpdateBanner(false);
+    refreshKnownLastUpdated();
   };
 
   const handleEventDeleted = () => {
     setRefreshKey((k) => k + 1);
     setHasPendingRefresh(false);
     setShowUpdateBanner(false);
+    refreshKnownLastUpdated();
   };
 
   if (authError) {
@@ -240,10 +315,10 @@ export default function CalendarPage() {
         onYearMonthPress={() => setShowYearMonthPicker(true)}
       />
 
-      {/* 入力中に同期完了した場合の保留バナー */}
+      {/* 他の家族の更新を保留中のバナー */}
       {showUpdateBanner && (
         <div className="px-4 py-1.5 bg-blue-50 text-xs text-blue-600 text-center shrink-0">
-          予定が更新されました。保存後に反映されます。
+          他の家族が予定を更新しました。閉じると反映されます。
         </div>
       )}
 

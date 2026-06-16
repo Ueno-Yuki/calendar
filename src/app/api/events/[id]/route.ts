@@ -5,6 +5,7 @@ import { updateRow, appendRow, getMonthSheetName, ensureMonthSheet } from '@/lib
 import { findEventById, eventToValues } from '@/lib/eventsDb';
 import { deleteGCalEvent, updateGCalEvent } from '@/lib/googleCalendar';
 import { sendInstantNotification } from '@/lib/notificationService';
+import { setSyncMeta } from '@/lib/syncMetaDb';
 
 // ---- バリデーション ----
 
@@ -153,6 +154,8 @@ export async function PUT(
       await updateRow(found.sheetName, found.dataRowIndex, eventToValues(updated));
     }
 
+    setSyncMeta('events_last_updated_at', updated.updated_at).catch(() => {});
+
     return Response.json(updated);
   } catch {
     return Response.json({ error: '予定の更新に失敗しました' }, { status: 500 });
@@ -205,6 +208,8 @@ export async function DELETE(
     };
 
     await updateRow(found.sheetName, found.dataRowIndex, eventToValues(deleted));
+
+    setSyncMeta('events_last_updated_at', deleted.updated_at).catch(() => {});
 
     // 本人以外の家族へ即時Push通知（失敗しても削除成功扱い）
     sendInstantNotification('event_deleted', deleted, currentUser.role).catch(() => {});

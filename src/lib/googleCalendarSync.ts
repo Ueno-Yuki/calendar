@@ -240,6 +240,9 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
     }
   }
 
+  if (added + updated + deleted > 0) {
+    await setSyncMeta('events_last_updated_at', syncedAt);
+  }
   await setSyncMeta(LAST_SYNCED_KEY, syncedAt);
   return { synced: true, added, updated, deleted, syncedAt };
 }

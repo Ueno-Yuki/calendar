@@ -4,7 +4,7 @@ import { getCurrentUser, AuthError } from '@/lib/auth';
 import { getRows, appendRow, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
 import { parseEventRow, eventToValues } from '@/lib/eventsDb';
 import { upsertTemplate } from '@/lib/templatesDb';
-import { getSyncMeta } from '@/lib/syncMetaDb';
+import { getSyncMeta, setSyncMeta } from '@/lib/syncMetaDb';
 import { createGCalEvent } from '@/lib/googleCalendar';
 import { sendInstantNotification } from '@/lib/notificationService';
 
@@ -206,6 +206,8 @@ export async function POST(request: NextRequest) {
     const startMonth = parseInt(startMonthStr);
     await ensureMonthSheet(startYear, startMonth);
     await appendRow(getMonthSheetName(startYear, startMonth), eventToValues(event));
+
+    setSyncMeta('events_last_updated_at', now).catch(() => {});
 
     upsertTemplate({
       person: event.person,
