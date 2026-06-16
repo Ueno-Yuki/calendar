@@ -1,6 +1,7 @@
 'use client';
 
 import { RefreshCw, Settings } from 'lucide-react';
+import GoogleSyncIcon from '@/components/icons/GoogleSyncIcon';
 
 interface Props {
   year: number;
@@ -64,12 +65,12 @@ export default function CalendarHeader({
         {showGoogleSync && (
           <button
             type="button"
-            aria-label="Googleカレンダーを同期"
+            aria-label="Googleカレンダー同期"
             onClick={onGoogleSync}
             disabled={googleSyncDisabled || isGoogleSyncing}
             className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 text-sm font-semibold text-zinc-500 hover:border-zinc-300 hover:text-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            <span className={isGoogleSyncing ? 'animate-pulse' : ''}>G</span>
+            <GoogleSyncIcon className={isGoogleSyncing ? 'animate-pulse' : ''} />
           </button>
         )}
         <button
