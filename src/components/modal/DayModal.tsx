@@ -361,7 +361,13 @@ function SwipeableEventCard({
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        <EventCard event={event} showTime={showTime} />
+        <EventCard
+          event={event}
+          showTime={showTime}
+          canAction={canAction}
+          onEditRequest={onEditRequest}
+          onDeleteRequest={onDeleteRequest}
+        />
       </div>
     </div>
   );
@@ -372,9 +378,12 @@ function SwipeableEventCard({
 interface EventCardProps {
   event: Event;
   showTime: boolean;
+  canAction: boolean;
+  onEditRequest: (event: Event) => void;
+  onDeleteRequest: (event: Event) => void;
 }
 
-function EventCard({ event, showTime }: EventCardProps) {
+function EventCard({ event, showTime, canAction, onEditRequest, onDeleteRequest }: EventCardProps) {
   const color = FAMILY_COLORS[event.person];
   const timeLabel = showTime ? formatEventTimeRange(event) : '';
 
@@ -386,13 +395,37 @@ function EventCard({ event, showTime }: EventCardProps) {
       {timeLabel && (
         <p className="text-xs font-medium text-zinc-500 mb-1.5 tabular-nums">{timeLabel}</p>
       )}
-      <div className="flex items-start gap-1">
+      <div className="flex items-center gap-1">
         <div className="flex items-baseline gap-1.5 flex-1 min-w-0">
           <span style={{ color: color.main }} className="text-xs font-bold shrink-0">
             {color.label}
           </span>
           <span className="text-sm font-semibold text-zinc-900 leading-snug">{event.title}</span>
         </div>
+        {canAction && (
+          <div
+            className="flex items-center shrink-0 -mr-1.5"
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => onEditRequest(event)}
+              aria-label="編集"
+              className="flex items-center justify-center w-9 h-9 text-blue-500 active:text-blue-700"
+            >
+              <Pencil size={14} strokeWidth={2} />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDeleteRequest(event)}
+              aria-label="削除"
+              className="flex items-center justify-center w-9 h-9 text-red-400 active:text-red-600"
+            >
+              <Trash2 size={14} strokeWidth={2} />
+            </button>
+          </div>
+        )}
       </div>
       {event.location && (
         <p className="flex items-center gap-0.5 text-xs text-zinc-500 mt-1 truncate">
