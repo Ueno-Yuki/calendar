@@ -80,7 +80,7 @@ export default function EventCreateForm({
     ? addOneHour(initStartTime)
     : initialEvent.end_time;
 
-  const [currentRole] = useState<FamilyRole | null>(readCurrentRole);
+  const [currentRole, setCurrentRole] = useState<FamilyRole | null>(readCurrentRole);
   const [quietHours, setQuietHours] = useState<QuietHoursSettings>(DEFAULT_QUIET_HOURS);
   const [title, setTitle] = useState(initialEvent?.title ?? '');
   const [startDate, setStartDate] = useState(initialEvent?.start_date ?? dateStr);
@@ -106,6 +106,10 @@ export default function EventCreateForm({
   useEffect(() => {
     if (!showLastOption) setIsLast(false);
   }, [showLastOption]);
+
+  useEffect(() => {
+    setCurrentRole(readCurrentRole());
+  }, []);
 
   useEffect(() => {
     if (suppressSuggestions) return;
@@ -403,11 +407,20 @@ export default function EventCreateForm({
             <div className="ml-auto flex items-center gap-2">
               <DateButton value={endDate} min={startDate} onChange={setEndDate} label="終了日" />
               {!allDay && (
-                <TimeButton
-                  value={isLast ? 'ラスト' : endTime}
-                  isLast={isLast}
-                  onClick={() => setTimePickerFor('end')}
-                />
+                <>
+                  <TimeButton
+                    value={isLast ? 'ラスト' : endTime}
+                    isLast={isLast}
+                    onClick={() => setTimePickerFor('end')}
+                  />
+                  {showLastOption && !isLast && (
+                    <TimeButton
+                      value="ラスト"
+                      isLast
+                      onClick={() => setIsLast(true)}
+                    />
+                  )}
+                </>
               )}
             </div>
           </div>

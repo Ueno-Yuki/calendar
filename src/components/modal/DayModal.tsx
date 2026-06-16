@@ -49,9 +49,13 @@ export default function DayModal({
   const [eventToEdit, setEventToEdit] = useState<Event | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const [currentRole] = useState<FamilyRole | null>(readCurrentRole);
+  const [currentRole, setCurrentRole] = useState<FamilyRole | null>(readCurrentRole);
 
   const isRefreshBlocked = mode === 'create' || mode === 'edit' || eventToDelete !== null;
+
+  useEffect(() => {
+    setCurrentRole(readCurrentRole());
+  }, []);
 
   useEffect(() => {
     onRefreshBlockChange(isRefreshBlocked);
