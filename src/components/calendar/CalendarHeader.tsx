@@ -68,7 +68,7 @@ export default function CalendarHeader({
             aria-label="Googleカレンダー同期"
             onClick={onGoogleSync}
             disabled={googleSyncDisabled || isGoogleSyncing}
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 text-sm font-semibold text-zinc-500 hover:border-zinc-300 hover:text-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold text-zinc-500 hover:border-zinc-300 hover:text-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <GoogleSyncIcon className={isGoogleSyncing ? 'animate-pulse' : ''} />
           </button>
