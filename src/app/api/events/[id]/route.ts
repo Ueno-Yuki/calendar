@@ -129,8 +129,8 @@ export async function PUT(
       updated_at: new Date().toISOString(),
     };
 
-    // 母の予定のみ Google Calendar も更新（失敗してもSheets更新は継続）
-    if (found.event.owner === 'mother' && found.event.google_event_id) {
+    // 母の予定のみ Google Calendar も更新（DISABLE_GOOGLE_SYNC=true の場合は停止）
+    if (found.event.owner === 'mother' && found.event.google_event_id && process.env.DISABLE_GOOGLE_SYNC !== 'true') {
       updateGCalEvent(found.event.google_event_id, updated).catch(() => {});
     }
 
@@ -196,8 +196,8 @@ export async function DELETE(
       return Response.json({ error: '他人の予定は削除できません' }, { status: 403 });
     }
 
-    // 母の予定のみ Google Calendar からも削除（失敗してもSheets削除は継続）
-    if (found.event.owner === 'mother' && found.event.google_event_id) {
+    // 母の予定のみ Google Calendar からも削除（DISABLE_GOOGLE_SYNC=true の場合は停止）
+    if (found.event.owner === 'mother' && found.event.google_event_id && process.env.DISABLE_GOOGLE_SYNC !== 'true') {
       deleteGCalEvent(found.event.google_event_id).catch(() => {});
     }
 

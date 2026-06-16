@@ -14,10 +14,6 @@ import YearMonthPickerModal from '@/components/modal/YearMonthPickerModal';
 
 interface EventsResponse {
   events: Event[];
-  sync: {
-    googleSyncRecommended: boolean;
-    lastSyncedAt: string | null;
-  };
 }
 
 function getInitialYearMonth() {
@@ -41,14 +37,12 @@ export default function CalendarPage() {
   const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
   const notificationPromptCheckedRef = useRef(false);
 
-  // Google同期UX状態
-  const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
+  // ポーリング・保留更新UX状態
   const [hasPendingRefresh, setHasPendingRefresh] = useState(false);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
 
   // refでクロージャ内から最新状態を参照する
   const selectedDateRef = useRef<string | null>(null);
-  const isSyncingRef = useRef(false);
   // undefined = 未初期化, null = サーバー未設定, string = ISO日時
   const knownLastUpdatedAtRef = useRef<string | null | undefined>(undefined);
 
@@ -123,32 +117,6 @@ export default function CalendarPage() {
     }
   }, []);
 
-  // バックグラウンド同期（POST /api/sync/google）
-  // 完了後: 入力中でなければ即リロード、入力中なら保留バナーを表示
-  const runGoogleSync = useCallback(() => {
-    if (isSyncingRef.current) return;
-    isSyncingRef.current = true;
-    setIsGoogleSyncing(true);
-
-    apiFetch(`/api/sync/google?year=${year}&month=${month}`, { method: 'POST' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((result: { synced?: boolean } | null) => {
-        if (!result?.synced) return;
-        if (!selectedDateRef.current) {
-          // 入力中でない → 即リロード
-          setRefreshKey((k) => k + 1);
-        } else {
-          // 入力中 → 保留
-          setHasPendingRefresh(true);
-          setShowUpdateBanner(true);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        isSyncingRef.current = false;
-        setIsGoogleSyncing(false);
-      });
-  }, [year, month]);
 
   useEffect(() => {
     const key = `${year}-${String(month).padStart(2, '0')}`;
@@ -181,11 +149,6 @@ export default function CalendarPage() {
         cacheRef.current[key] = data.events;
         setEvents(data.events);
         hasLoadedRef.current = true;
-
-        // 同期推奨の場合はバックグラウンドで Google 同期を実行
-        if (data.sync.googleSyncRecommended) {
-          runGoogleSync();
-        }
       })
       .catch((err: unknown) => {
         if (err instanceof ApiAuthError) setAuthError(true);
@@ -200,7 +163,7 @@ export default function CalendarPage() {
     return () => {
       cancelled = true;
     };
-  }, [year, month, refreshKey, runGoogleSync]);
+  }, [year, month, refreshKey]);
 
   // 30秒ポーリング: 他の家族の予定変更を検知してリロードまたは保留する
   useEffect(() => {
@@ -310,7 +273,7 @@ export default function CalendarPage() {
       <CalendarHeader
         year={year}
         month={month}
-        syncing={syncing || isGoogleSyncing}
+        syncing={syncing}
         onSettingsOpen={() => setShowSettings(true)}
         onYearMonthPress={() => setShowYearMonthPicker(true)}
       />
