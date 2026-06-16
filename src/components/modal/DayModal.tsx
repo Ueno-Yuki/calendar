@@ -327,9 +327,9 @@ function SwipeableEventCard({
   return (
     <div className="relative overflow-hidden rounded-xl">
       {/* 編集ボタン（左側・青） — 右スワイプで出現 */}
-      {canAction && (
+      {canAction && isSwiped && swipeDir === 'right' && (
         <div
-          className="absolute left-0 top-0 bottom-0 flex items-center justify-center bg-blue-500"
+          className="absolute inset-y-0 left-0 flex items-center justify-center rounded-l-xl bg-blue-500"
           style={{ width: ACTION_BTN_WIDTH }}
         >
           <button
@@ -344,9 +344,9 @@ function SwipeableEventCard({
       )}
 
       {/* 削除ボタン（右側・赤） — 左スワイプで出現 */}
-      {canAction && (
+      {canAction && isSwiped && swipeDir === 'left' && (
         <div
-          className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500"
+          className="absolute inset-y-0 right-0 flex items-center justify-center rounded-r-xl bg-red-500"
           style={{ width: ACTION_BTN_WIDTH }}
         >
           <button
@@ -373,6 +373,8 @@ function SwipeableEventCard({
           event={event}
           showTime={showTime}
           canAction={canAction}
+          isSwiped={isSwiped}
+          swipeDir={swipeDir}
           onEditRequest={onEditRequest}
           onDeleteRequest={onDeleteRequest}
         />
@@ -387,18 +389,33 @@ interface EventCardProps {
   event: Event;
   showTime: boolean;
   canAction: boolean;
+  isSwiped: boolean;
+  swipeDir: 'left' | 'right';
   onEditRequest: (event: Event) => void;
   onDeleteRequest: (event: Event) => void;
 }
 
-function EventCard({ event, showTime, canAction, onEditRequest, onDeleteRequest }: EventCardProps) {
+function EventCard({
+  event,
+  showTime,
+  canAction,
+  isSwiped,
+  swipeDir,
+  onEditRequest,
+  onDeleteRequest,
+}: EventCardProps) {
   const color = FAMILY_COLORS[event.person];
   const timeLabel = showTime ? formatEventTimeRange(event) : '';
+  const cardRadiusClass = isSwiped
+    ? swipeDir === 'left'
+      ? 'rounded-l-xl rounded-r-none'
+      : 'rounded-l-none rounded-r-xl'
+    : 'rounded-xl';
 
   return (
     <div
       style={{ borderLeftColor: color.main, backgroundColor: color.light }}
-      className="border-l-[3px] rounded-r-xl px-3 py-2.5"
+      className={`border-l-[3px] px-3 py-2.5 ${cardRadiusClass}`}
     >
       {timeLabel && (
         <p className="text-xs font-medium text-zinc-500 mb-1.5 tabular-nums">{timeLabel}</p>
