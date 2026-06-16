@@ -172,6 +172,7 @@ export async function POST(request: NextRequest) {
       all_day: input.all_day,
       source: 'manual',
       google_event_id: '',
+      google_color_id: '',
       created_at: now,
       updated_at: now,
       deleted: false,

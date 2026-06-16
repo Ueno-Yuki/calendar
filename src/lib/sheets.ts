@@ -5,7 +5,7 @@ export const EVENT_HEADERS = [
   'id', 'owner', 'person', 'title',
   'start_date', 'end_date', 'start_time', 'end_time',
   'location', 'memo', 'all_day', 'source',
-  'google_event_id', 'created_at', 'updated_at', 'deleted',
+  'google_event_id', 'google_color_id', 'created_at', 'updated_at', 'deleted',
 ] as const;
 
 function getSheetsClient() {

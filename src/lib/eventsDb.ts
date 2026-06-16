@@ -20,6 +20,7 @@ export function parseEventRow(row: Record<string, string>): Event {
     all_day: row.all_day === 'TRUE',
     source: (row.source as EventSource) ?? 'manual',
     google_event_id: row.google_event_id ?? '',
+    google_color_id: row.google_color_id ?? '',
     created_at: row.created_at ?? '',
     updated_at: row.updated_at ?? '',
     deleted: row.deleted === 'TRUE',

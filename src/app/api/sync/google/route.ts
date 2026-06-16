@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { getCurrentUser, AuthError } from '@/lib/auth';
 import { getSyncMeta } from '@/lib/syncMetaDb';
-import { debugGoogleSync, syncGoogleToApp } from '@/lib/googleCalendarSync';
+import { debugGoogleSync, parseGoogleSyncColorIds, syncGoogleToApp } from '@/lib/googleCalendarSync';
 
 const LAST_SYNCED_KEY = 'mother_google_calendar_last_synced_at';
 const SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10分
@@ -12,7 +12,7 @@ function canUseMotherGoogleSync(role: ReturnType<typeof getCurrentUser>['role'])
 
 // POST /api/sync/google
 // Google → アプリ の手動同期エンドポイント。
-// 取得範囲は syncGoogleToApp() 内で当年固定 (JST)。
+// 取得範囲は syncGoogleToApp() 内で現在日時から当年末まで (JST)。
 // 最終同期から10分未満の場合は実行しない（?force=true で強制実行可）。
 export async function POST(request: NextRequest) {
   let currentUser: ReturnType<typeof getCurrentUser>;
@@ -38,6 +38,12 @@ export async function POST(request: NextRequest) {
     return Response.json(result);
   }
 
+  const body = await request.json().catch(() => null);
+  const colorIds = parseGoogleSyncColorIds(request.nextUrl.searchParams.get('colorIds'), body);
+  if (colorIds.length === 0) {
+    return Response.json({ synced: false, reason: 'no_color_selected' }, { status: 400 });
+  }
+
   const force = request.nextUrl.searchParams.get('force') === 'true';
 
   if (!force) {
@@ -51,7 +57,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await syncGoogleToApp();
+    const result = await syncGoogleToApp(colorIds);
     return Response.json(result);
   } catch {
     return Response.json({ synced: false, reason: 'error' }, { status: 500 });

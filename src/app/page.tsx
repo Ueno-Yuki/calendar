@@ -8,6 +8,9 @@ import type { StoredUser } from '@/lib/auth';
 import CalendarHeader from '@/components/calendar/CalendarHeader';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import DayModal from '@/components/modal/DayModal';
+import GoogleSyncPreviewModal, {
+  type GoogleSyncPreview,
+} from '@/components/modal/GoogleSyncPreviewModal';
 import SettingsModal from '@/components/modal/SettingsModal';
 import NotificationPromptModal, {
   NOTIFICATION_PROMPT_DISMISSED_KEY,
@@ -16,6 +19,11 @@ import YearMonthPickerModal from '@/components/modal/YearMonthPickerModal';
 
 interface EventsResponse {
   events: Event[];
+}
+
+interface GoogleStatusResponse {
+  connected: boolean;
+  syncDisabled: boolean;
 }
 
 function canUseGoogleSync(role: FamilyRole | null): boolean {
@@ -61,8 +69,13 @@ export default function CalendarPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshBlocked, setIsRefreshBlocked] = useState(false);
   const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
+  const [isGooglePreviewLoading, setIsGooglePreviewLoading] = useState(false);
+  const [googleSyncDisabled, setGoogleSyncDisabled] = useState(false);
+  const [googleSyncPreview, setGoogleSyncPreview] = useState<GoogleSyncPreview | null>(null);
+  const [selectedGoogleColorIds, setSelectedGoogleColorIds] = useState<string[]>([]);
   const [googleSyncMessage, setGoogleSyncMessage] = useState('');
   const [googleSyncError, setGoogleSyncError] = useState('');
+  const [googleSyncModalError, setGoogleSyncModalError] = useState('');
 
   // refでクロージャ内から最新状態を参照する
   const isRefreshBlockedRef = useRef(false);
@@ -79,6 +92,27 @@ export default function CalendarPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!canUseGoogleSync(currentRole)) {
+      return;
+    }
+
+    let cancelled = false;
+    apiFetch('/api/auth/google/status')
+      .then((res) => (res.ok ? (res.json() as Promise<GoogleStatusResponse>) : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setGoogleSyncDisabled(!data.connected || data.syncDisabled);
+      })
+      .catch(() => {
+        if (!cancelled) setGoogleSyncDisabled(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRole]);
 
   useEffect(() => {
     isRefreshBlockedRef.current = isRefreshBlocked;
@@ -322,33 +356,88 @@ export default function CalendarPage() {
     }
   }, [fetchLastUpdatedAt, isRefreshing, reloadEvents, setKnownLastUpdated]);
 
-  const handleGoogleSynced = useCallback(() => {
-    void reloadEvents();
-    setHasRemoteUpdates(false);
-    refreshKnownLastUpdated();
-  }, [refreshKnownLastUpdated, reloadEvents]);
-
   const handleHeaderGoogleSync = useCallback(async () => {
-    if (!canUseGoogleSync(currentRole) || isGoogleSyncing) return;
+    if (!canUseGoogleSync(currentRole) || googleSyncDisabled || isGooglePreviewLoading || isGoogleSyncing) return;
+
+    setIsGooglePreviewLoading(true);
+    setGoogleSyncMessage('');
+    setGoogleSyncError('');
+    setGoogleSyncModalError('');
+    try {
+      const res = await apiFetch('/api/sync/google/preview');
+      const data = (await res.json().catch(() => null)) as
+        | GoogleSyncPreview
+        | { reason?: string }
+        | null;
+
+      if (!res.ok) {
+        const reason = data && 'reason' in data ? data.reason : undefined;
+        setGoogleSyncError(reason === 'forbidden' ? '同期権限がありません' : '同期プレビューに失敗しました');
+        return;
+      }
+
+      if (data && 'reason' in data && data.reason === 'sync_disabled') {
+        setGoogleSyncError('Google同期は停止中です');
+        return;
+      }
+      if (data && 'reason' in data && data.reason === 'not_connected') {
+        setGoogleSyncError('Googleカレンダーが未連携です');
+        return;
+      }
+
+      if (data && 'ok' in data && data.ok) {
+        setGoogleSyncPreview(data);
+        setSelectedGoogleColorIds([]);
+      } else {
+        setGoogleSyncError('同期プレビューに失敗しました');
+      }
+    } catch {
+      setGoogleSyncError('同期プレビューに失敗しました');
+    } finally {
+      setIsGooglePreviewLoading(false);
+    }
+  }, [currentRole, googleSyncDisabled, isGooglePreviewLoading, isGoogleSyncing]);
+
+  const handleToggleGoogleColor = useCallback((colorId: string) => {
+    setSelectedGoogleColorIds((current) =>
+      current.includes(colorId)
+        ? current.filter((id) => id !== colorId)
+        : [...current, colorId],
+    );
+  }, []);
+
+  const handleCloseGooglePreview = useCallback(() => {
+    if (isGoogleSyncing) return;
+    setGoogleSyncPreview(null);
+    setSelectedGoogleColorIds([]);
+    setGoogleSyncModalError('');
+  }, [isGoogleSyncing]);
+
+  const handleConfirmGoogleSync = useCallback(async () => {
+    if (selectedGoogleColorIds.length === 0 || isGoogleSyncing) return;
 
     setIsGoogleSyncing(true);
+    setGoogleSyncModalError('');
     setGoogleSyncMessage('');
     setGoogleSyncError('');
     try {
-      const res = await apiFetch('/api/sync/google', { method: 'POST' });
+      const res = await apiFetch('/api/sync/google', {
+        method: 'POST',
+        body: JSON.stringify({ colorIds: selectedGoogleColorIds }),
+      });
       const data = (await res.json().catch(() => null)) as { reason?: string } | null;
 
       if (!res.ok) {
-        setGoogleSyncError(data?.reason === 'forbidden' ? '同期権限がありません' : 'Google同期に失敗しました');
+        setGoogleSyncModalError(data?.reason === 'no_color_selected' ? '取り込む色を選択してください' : 'Google同期に失敗しました');
         return;
       }
 
       if (data?.reason === 'sync_disabled') {
-        setGoogleSyncError('Google同期は停止中です');
+        setGoogleSyncModalError('Google同期は停止中です');
         return;
       }
       if (data?.reason === 'not_connected') {
-        setGoogleSyncError('Googleカレンダーが未連携です');
+        setGoogleSyncModalError('Googleカレンダーが未連携です');
         return;
       }
       if (data?.reason === 'too_soon') {
@@ -357,15 +446,17 @@ export default function CalendarPage() {
         setGoogleSyncMessage('Google同期しました');
       }
 
+      setGoogleSyncPreview(null);
+      setSelectedGoogleColorIds([]);
       await reloadEvents();
       setHasRemoteUpdates(false);
       refreshKnownLastUpdated();
     } catch {
-      setGoogleSyncError('Google同期に失敗しました');
+      setGoogleSyncModalError('Google同期に失敗しました');
     } finally {
       setIsGoogleSyncing(false);
     }
-  }, [currentRole, isGoogleSyncing, refreshKnownLastUpdated, reloadEvents]);
+  }, [isGoogleSyncing, refreshKnownLastUpdated, reloadEvents, selectedGoogleColorIds]);
 
   if (authError) {
     return (
@@ -387,7 +478,8 @@ export default function CalendarPage() {
         isRefreshing={isRefreshing}
         refreshDisabled={isRefreshBlocked}
         showGoogleSync={canUseGoogleSync(currentRole)}
-        isGoogleSyncing={isGoogleSyncing}
+        isGoogleSyncing={isGooglePreviewLoading || isGoogleSyncing}
+        googleSyncDisabled={googleSyncDisabled}
         onGoogleSync={handleHeaderGoogleSync}
         onRefresh={handleManualRefresh}
         onSettingsOpen={() => setShowSettings(true)}
@@ -428,10 +520,24 @@ export default function CalendarPage() {
           onRefreshBlockChange={handleRefreshBlockChange}
         />
       )}
+      {googleSyncPreview && (
+        <GoogleSyncPreviewModal
+          preview={googleSyncPreview}
+          selectedColorIds={selectedGoogleColorIds}
+          syncing={isGoogleSyncing}
+          error={googleSyncModalError}
+          onToggleColor={handleToggleGoogleColor}
+          onClose={handleCloseGooglePreview}
+          onConfirm={handleConfirmGoogleSync}
+        />
+      )}
       {showSettings && (
         <SettingsModal
           onClose={() => setShowSettings(false)}
-          onGoogleSynced={handleGoogleSynced}
+          onGoogleSyncRequest={() => {
+            setShowSettings(false);
+            void handleHeaderGoogleSync();
+          }}
         />
       )}
       {showYearMonthPicker && (

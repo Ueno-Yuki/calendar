@@ -20,6 +20,7 @@ export interface Event {
   all_day: boolean;
   source: EventSource;
   google_event_id: string;
+  google_color_id: string;
   created_at: string;   // ISO 8601
   updated_at: string;   // ISO 8601
   deleted: boolean;

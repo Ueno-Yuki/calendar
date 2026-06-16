@@ -33,6 +33,21 @@ export interface SyncResult {
   reason?: string;
 }
 
+export interface GoogleSyncPreviewResult {
+  ok: true;
+  timeMin: string;
+  timeMax: string;
+  totalFetched: number;
+  validEvents: number;
+  cancelled: number;
+  colorGroups: Array<{
+    colorId: string;
+    label: string;
+    count: number;
+    samples: string[];
+  }>;
+}
+
 export interface GoogleSyncDebugResult {
   debug: true;
   calendarId: string;
@@ -60,12 +75,46 @@ export interface GoogleSyncDebugResult {
 
 type ExistingEntry = { event: Event; sheetName: string; dataRowIndex: number };
 
-function getSyncColorIdSet(): Set<string> | null {
-  const ids = SYNC_COLOR_IDS()
+function normalizeColorIds(colorIds: string[] | undefined): string[] {
+  if (!colorIds) {
+    return SYNC_COLOR_IDS()
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+  }
+  return colorIds.map((id) => id.trim()).filter(Boolean);
+}
+
+function getSyncColorIdSet(colorIds?: string[]): Set<string> | null {
+  const ids = normalizeColorIds(colorIds);
+  return ids.length > 0 ? new Set(ids) : null;
+}
+
+function getRequiredSyncColorIdSet(colorIds: string[]): Set<string> {
+  return new Set(colorIds.map((id) => id.trim()).filter(Boolean));
+}
+
+function parseColorIdsParam(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is string => typeof id === 'string').map((id) => id.trim()).filter(Boolean);
+}
+
+export function parseGoogleSyncColorIdsFromBody(body: unknown): string[] {
+  if (!body || typeof body !== 'object') return [];
+  return parseColorIdsParam((body as { colorIds?: unknown }).colorIds);
+}
+
+function parseGoogleSyncColorIdsFromQuery(value: string | null): string[] {
+  return (value ?? '')
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean);
-  return ids.length > 0 ? new Set(ids) : null;
+}
+
+export function parseGoogleSyncColorIds(value: string | null, body?: unknown): string[] {
+  const bodyIds = parseGoogleSyncColorIdsFromBody(body);
+  if (bodyIds.length > 0) return bodyIds;
+  return parseGoogleSyncColorIdsFromQuery(value);
 }
 
 // Google Calendar API の Event.colorId を同期対象判定に使う。
@@ -85,6 +134,10 @@ function incrementCount(counts: Record<string, number>, key: string): void {
 
 function getEventStartForDebug(item: calendar_v3.Schema$Event): string {
   return item.start?.dateTime ?? item.start?.date ?? '';
+}
+
+function getColorLabel(colorId: string): string {
+  return colorId === 'default' ? 'デフォルト' : `色 ${colorId}`;
 }
 
 // ---- 簡易同期ロック ----
@@ -176,22 +229,31 @@ async function recheckSheet(
   };
 }
 
+async function ensureMonthSheetByName(sheetName: string): Promise<void> {
+  const [yearStr, monthStr] = sheetName.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  if (!Number.isNaN(year) && !Number.isNaN(month)) {
+    await ensureMonthSheet(year, month);
+  }
+}
+
 // ---- 日付ヘルパー ----
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-// JST基準の現在年を返す
-function jstCurrentYear(): number {
-  return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCFullYear();
-}
-
-// 初回取り込み用: Asia/Tokyo基準の当年のみ
-// timeMin = YYYY-01-01T00:00:00+09:00, timeMax = (YYYY+1)-01-01T00:00:00+09:00
-function jstYearRange(year: number): { timeMin: string; timeMax: string } {
+function currentJstToYearEndRange(): { timeMin: string; timeMax: string } {
+  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const year = jst.getUTCFullYear();
+  const month = pad2(jst.getUTCMonth() + 1);
+  const day = pad2(jst.getUTCDate());
+  const hours = pad2(jst.getUTCHours());
+  const minutes = pad2(jst.getUTCMinutes());
+  const seconds = pad2(jst.getUTCSeconds());
   return {
-    timeMin: `${year}-01-01T00:00:00+09:00`,
+    timeMin: `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+09:00`,
     timeMax: `${year + 1}-01-01T00:00:00+09:00`,
   };
 }
@@ -225,7 +287,7 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
       return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'not_connected' };
     }
 
-    const { timeMin, timeMax } = jstYearRange(jstCurrentYear());
+    const { timeMin, timeMax } = currentJstToYearEndRange();
     const items = await listGCalItems(calendar, {
       calendarId: CALENDAR_ID(),
       timeMin,
@@ -280,6 +342,7 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
         all_day: parsed.all_day,
         source: 'google',
         google_event_id: parsed.google_event_id,
+        google_color_id: getEventColorId(item),
         created_at: syncedAt,
         updated_at: syncedAt,
         deleted: false,
@@ -305,9 +368,13 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
 // 取得範囲: Asia/Tokyo基準の当年のみ（繰り返し予定の将来年大量登録を防ぐ）
 // DISABLE_GOOGLE_SYNC=true の場合は何もしない。
 
-export async function syncGoogleToApp(): Promise<SyncResult> {
+export async function syncGoogleToApp(colorIds: string[]): Promise<SyncResult> {
   if (isSyncDisabled()) {
     return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'sync_disabled' };
+  }
+  const syncColorIds = getRequiredSyncColorIdSet(colorIds);
+  if (syncColorIds.size === 0) {
+    return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'no_color_selected' };
   }
 
   // ロック取得: 並行リクエストによる重複 append を防ぐ
@@ -322,7 +389,7 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
       return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'not_connected' };
     }
 
-    const { timeMin, timeMax } = jstYearRange(jstCurrentYear());
+    const { timeMin, timeMax } = currentJstToYearEndRange();
     // 削除済み含めて取得することで Google 側の削除を検知できる
     const items = await listGCalItems(calendar, {
       calendarId: CALENDAR_ID(),
@@ -337,7 +404,6 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
     const syncedAt = new Date().toISOString();
     // processedIds: 同一同期内で同じ item.id を二重処理しない
     const processedIds = new Set<string>();
-    const syncColorIds = getSyncColorIdSet();
     let added = 0;
     let updated = 0;
     let deleted = 0;
@@ -346,14 +412,16 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
       if (!item.id) continue;
       if (processedIds.has(item.id)) continue;
       processedIds.add(item.id);
-      if (!isIncludedByColor(item, syncColorIds)) continue;
 
       const existing = existingMap.get(item.id);
 
       if (item.status === 'cancelled') {
+        const cancelledColorId = item.colorId ?? existing?.event.google_color_id ?? '';
+        if (!cancelledColorId || !syncColorIds.has(cancelledColorId)) continue;
         // Google 側で削除 → アプリ側も論理削除
         if (existing && !existing.event.deleted) {
           const deletedEvent: Event = { ...existing.event, deleted: true, updated_at: syncedAt };
+          await ensureMonthSheetByName(existing.sheetName);
           await updateRow(existing.sheetName, existing.dataRowIndex, eventToValues(deletedEvent));
           existingMap.set(item.id, { ...existing, event: deletedEvent }); // マップ更新
           deleted++;
@@ -361,8 +429,10 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
         continue;
       }
 
+      if (!isIncludedByColor(item, syncColorIds)) continue;
       const parsed = parseGCalEvent(item);
       if (!parsed) continue;
+      const googleColorId = getEventColorId(item);
 
       if (!existing) {
         // 新規: 全月シートに存在しない場合のみ append
@@ -393,6 +463,7 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
           all_day: parsed.all_day,
           source: 'google',
           google_event_id: parsed.google_event_id,
+          google_color_id: googleColorId,
           created_at: syncedAt,
           updated_at: syncedAt,
           deleted: false,
@@ -413,7 +484,8 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
           e.end_time !== parsed.end_time ||
           e.all_day !== parsed.all_day ||
           e.location !== parsed.location ||
-          e.memo !== parsed.memo;
+          e.memo !== parsed.memo ||
+          e.google_color_id !== googleColorId;
 
         if (changed) {
           const updatedEvent: Event = {
@@ -426,8 +498,10 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
             all_day: parsed.all_day,
             location: parsed.location,
             memo: parsed.memo,
+            google_color_id: googleColorId,
             updated_at: syncedAt,
           };
+          await ensureMonthSheetByName(existing.sheetName);
           await updateRow(existing.sheetName, existing.dataRowIndex, eventToValues(updatedEvent));
           existingMap.set(item.id, { ...existing, event: updatedEvent }); // マップ更新
           updated++;
@@ -445,6 +519,71 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
   }
 }
 
+// ---- Google同期プレビュー ----
+// 現在日時から当年末までのGoogle予定を取得し、Event.colorIdごとに件数を返す。
+
+export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | SyncResult> {
+  if (isSyncDisabled()) {
+    return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'sync_disabled' };
+  }
+
+  const calendar = await getAuthorizedCalendar();
+  if (!calendar) {
+    return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'not_connected' };
+  }
+
+  const { timeMin, timeMax } = currentJstToYearEndRange();
+  const items = await listGCalItems(calendar, {
+    calendarId: CALENDAR_ID(),
+    timeMin,
+    timeMax,
+    singleEvents: true,
+    maxResults: 2500,
+    showDeleted: true,
+  });
+
+  type ColorGroup = { colorId: string; label: string; count: number; samples: string[] };
+  const groups = new Map<string, ColorGroup>();
+  let validEvents = 0;
+  let cancelled = 0;
+
+  for (const item of items) {
+    if (item.status === 'cancelled') {
+      cancelled++;
+      continue;
+    }
+    if (!parseGCalEvent(item)) continue;
+
+    validEvents++;
+    const colorId = getEventColorId(item);
+    const group = groups.get(colorId) ?? {
+      colorId,
+      label: getColorLabel(colorId),
+      count: 0,
+      samples: [],
+    };
+    group.count++;
+    if (group.samples.length < 3) {
+      group.samples.push(item.summary ?? '(タイトルなし)');
+    }
+    groups.set(colorId, group);
+  }
+
+  return {
+    ok: true,
+    timeMin,
+    timeMax,
+    totalFetched: items.length,
+    validEvents,
+    cancelled,
+    colorGroups: [...groups.values()].sort((a, b) => {
+      if (a.colorId === 'default') return -1;
+      if (b.colorId === 'default') return 1;
+      return a.colorId.localeCompare(b.colorId, 'ja');
+    }),
+  };
+}
+
 // ---- Google同期デバッグ ----
 // POST /api/sync/google?debug=true から呼ばれる読み取り専用のドライラン。
 // Sheets への追加・更新・削除、sync_meta 更新、ロック取得は行わない。
@@ -459,7 +598,7 @@ export async function debugGoogleSync(): Promise<GoogleSyncDebugResult | SyncRes
     return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'not_connected' };
   }
 
-  const { timeMin, timeMax } = jstYearRange(jstCurrentYear());
+  const { timeMin, timeMax } = currentJstToYearEndRange();
   const items = await listGCalItems(calendar, {
     calendarId: CALENDAR_ID(),
     timeMin,
@@ -631,6 +770,7 @@ export async function cleanupGoogleDuplicates(): Promise<CleanupResult> {
       if (!row) continue;
       const event = parseEventRow(row);
       const deletedEvent: Event = { ...event, deleted: true, updated_at: now };
+      await ensureMonthSheetByName(entry.sheetName);
       await updateRow(entry.sheetName, entry.dataRowIndex, eventToValues(deletedEvent));
       cleaned++;
     }
