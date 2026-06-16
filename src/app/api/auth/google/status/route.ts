@@ -17,12 +17,23 @@ export async function GET(request: NextRequest) {
   }
 
   if (currentUser.role !== 'mother') {
-    return Response.json({ connected: false });
+    return Response.json({
+      connected: false,
+      lastSyncedAt: null,
+      syncDisabled: process.env.DISABLE_GOOGLE_SYNC === 'true',
+    });
   }
 
   try {
-    const token = await getSyncMeta('mother_google_refresh_token');
-    return Response.json({ connected: !!token && token.trim() !== '' });
+    const [token, lastSyncedAt] = await Promise.all([
+      getSyncMeta('mother_google_refresh_token'),
+      getSyncMeta('mother_google_calendar_last_synced_at'),
+    ]);
+    return Response.json({
+      connected: !!token && token.trim() !== '',
+      lastSyncedAt,
+      syncDisabled: process.env.DISABLE_GOOGLE_SYNC === 'true',
+    });
   } catch {
     return Response.json({ error: 'サーバーエラー' }, { status: 500 });
   }

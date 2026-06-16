@@ -11,13 +11,18 @@ const SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10分
 // 取得範囲は syncGoogleToApp() 内で当年固定 (JST)。
 // 最終同期から10分未満の場合は実行しない（?force=true で強制実行可）。
 export async function POST(request: NextRequest) {
+  let currentUser: ReturnType<typeof getCurrentUser>;
   try {
-    getCurrentUser(request);
+    currentUser = getCurrentUser(request);
   } catch (error) {
     if (error instanceof AuthError) {
       return Response.json({ error: '認証が必要です' }, { status: 401 });
     }
     return Response.json({ error: 'サーバーエラー' }, { status: 500 });
+  }
+
+  if (currentUser.role !== 'mother') {
+    return Response.json({ synced: false, reason: 'forbidden' }, { status: 403 });
   }
 
   if (process.env.DISABLE_GOOGLE_SYNC === 'true') {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Bell, BellOff } from 'lucide-react';
+import { X, Bell, BellOff, RefreshCw } from 'lucide-react';
 import { apiFetch } from '@/lib/apiClient';
 import { STORAGE_KEY } from '@/lib/auth';
 import type { StoredUser } from '@/lib/auth';
@@ -18,6 +18,12 @@ interface NotificationSettings {
   quiet_hours_enabled: boolean;
   quiet_hours_start: string;
   quiet_hours_end: string;
+}
+
+interface GoogleStatus {
+  connected: boolean;
+  lastSyncedAt: string | null;
+  syncDisabled: boolean;
 }
 
 const DEFAULT_SETTINGS: NotificationSettings = {
@@ -56,6 +62,23 @@ function buildTimeOptions(): string[] {
 }
 
 const TIME_OPTIONS = buildTimeOptions();
+
+function formatJstDateTime(value: string | null): string {
+  if (!value) return '未同期';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '未同期';
+  const parts = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year')}/${get('month')}/${get('day')} ${get('hour')}:${get('minute')}`;
+}
 
 function readCurrentRole(): FamilyRole | null {
   if (typeof window === 'undefined') return null;
@@ -99,14 +122,19 @@ function Toggle({
 
 interface Props {
   onClose: () => void;
+  onGoogleSynced?: () => void;
 }
 
-export default function SettingsModal({ onClose }: Props) {
+export default function SettingsModal({ onClose, onGoogleSynced }: Props) {
   const [role, setRole] = useState<FamilyRole | null>(null);
   const [settings, setSettings] = useState<NotificationSettings>(DEFAULT_SETTINGS);
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [justGranted, setJustGranted] = useState(false);
+  const [googleStatus, setGoogleStatus] = useState<GoogleStatus | null>(null);
+  const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
+  const [googleSyncMessage, setGoogleSyncMessage] = useState('');
+  const [googleSyncError, setGoogleSyncError] = useState('');
 
   useEffect(() => {
     const r = readCurrentRole();
@@ -120,6 +148,15 @@ export default function SettingsModal({ onClose }: Props) {
         if (data) setSettings(data);
       })
       .catch(() => {});
+
+    if (r === 'mother') {
+      apiFetch('/api/auth/google/status')
+        .then((res) => (res.ok ? (res.json() as Promise<GoogleStatus>) : null))
+        .then((data) => {
+          if (data) setGoogleStatus(data);
+        })
+        .catch(() => {});
+    }
   }, []);
 
   const saveSettings = (next: NotificationSettings) => {
@@ -162,6 +199,56 @@ export default function SettingsModal({ onClose }: Props) {
       setPermission(getNotificationPermission());
     } finally {
       setIsSubscribing(false);
+    }
+  };
+
+  const handleGoogleSync = async () => {
+    if (!googleStatus?.connected || googleStatus.syncDisabled || isGoogleSyncing) return;
+    setIsGoogleSyncing(true);
+    setGoogleSyncMessage('');
+    setGoogleSyncError('');
+    try {
+      const res = await apiFetch('/api/sync/google', { method: 'POST' });
+      const data = (await res.json().catch(() => null)) as
+        | { synced?: boolean; syncedAt?: string; reason?: string }
+        | null;
+
+      if (!res.ok) {
+        setGoogleSyncError(data?.reason === 'forbidden' ? '同期権限がありません' : '同期に失敗しました');
+        return;
+      }
+
+      if (data?.reason === 'sync_disabled') {
+        setGoogleSyncError('Google同期は停止中です');
+        setGoogleStatus((prev) => prev ? { ...prev, syncDisabled: true } : prev);
+        return;
+      }
+
+      if (data?.reason === 'not_connected') {
+        setGoogleSyncError('Googleカレンダーが未連携です');
+        setGoogleStatus((prev) => prev ? { ...prev, connected: false } : prev);
+        return;
+      }
+
+      if (data?.reason === 'too_soon') {
+        setGoogleSyncMessage('直近で同期済みです');
+      } else {
+        setGoogleSyncMessage('同期しました');
+      }
+
+      const statusRes = await apiFetch('/api/auth/google/status');
+      if (statusRes.ok) {
+        const status = (await statusRes.json()) as GoogleStatus;
+        setGoogleStatus(status);
+      } else if (data?.syncedAt) {
+        const syncedAt = data.syncedAt;
+        setGoogleStatus((prev) => prev ? { ...prev, lastSyncedAt: syncedAt } : prev);
+      }
+      onGoogleSynced?.();
+    } catch {
+      setGoogleSyncError('同期に失敗しました');
+    } finally {
+      setIsGoogleSyncing(false);
     }
   };
 
@@ -295,6 +382,51 @@ export default function SettingsModal({ onClose }: Props) {
           </section>
 
           <div className="h-px bg-zinc-100 mx-4" />
+
+          {role === 'mother' && (
+            <>
+              {/* Googleカレンダー同期 */}
+              <section className="px-4 pt-5 pb-4">
+                <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide mb-3">
+                  Googleカレンダー同期
+                </p>
+
+                <div className="rounded-xl border border-zinc-100 bg-zinc-50 overflow-hidden">
+                  <div className="px-4 py-3.5 bg-white space-y-1">
+                    <p className="text-sm text-zinc-700">
+                      {googleStatus?.connected ? '連携済み' : '未連携'}
+                    </p>
+                    <p className="text-xs text-zinc-400">
+                      最終同期: {formatJstDateTime(googleStatus?.lastSyncedAt ?? null)}
+                    </p>
+                    {googleStatus?.syncDisabled && (
+                      <p className="text-xs text-red-500">Google同期は停止中です</p>
+                    )}
+                  </div>
+                  <div className="h-px bg-zinc-100" />
+                  <div className="px-4 py-3.5">
+                    <button
+                      type="button"
+                      onClick={handleGoogleSync}
+                      disabled={!googleStatus?.connected || !!googleStatus?.syncDisabled || isGoogleSyncing}
+                      className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-zinc-900 text-sm font-semibold text-white disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed"
+                    >
+                      <RefreshCw size={16} className={isGoogleSyncing ? 'animate-spin' : ''} />
+                      {isGoogleSyncing ? '同期中...' : 'Googleカレンダーを同期'}
+                    </button>
+                    {googleSyncMessage && (
+                      <p className="mt-2 text-xs text-green-600">{googleSyncMessage}</p>
+                    )}
+                    {googleSyncError && (
+                      <p className="mt-2 text-xs text-red-500">{googleSyncError}</p>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              <div className="h-px bg-zinc-100 mx-4" />
+            </>
+          )}
 
           {/* 通知設定トグル */}
           <section className="px-4 pt-5 pb-8">

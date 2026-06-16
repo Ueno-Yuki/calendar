@@ -285,6 +285,12 @@ export default function CalendarPage() {
     }
   }, [fetchLastUpdatedAt, isRefreshing, reloadEvents, setKnownLastUpdated]);
 
+  const handleGoogleSynced = useCallback(() => {
+    void reloadEvents();
+    setHasRemoteUpdates(false);
+    refreshKnownLastUpdated();
+  }, [refreshKnownLastUpdated, reloadEvents]);
+
   if (authError) {
     return (
       <div className="flex min-h-screen items-center justify-center p-8">
@@ -330,7 +336,12 @@ export default function CalendarPage() {
           onRefreshBlockChange={handleRefreshBlockChange}
         />
       )}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          onGoogleSynced={handleGoogleSynced}
+        />
+      )}
       {showYearMonthPicker && (
         <YearMonthPickerModal
           currentYear={year}
