@@ -52,16 +52,37 @@ function getInitialYearMonth() {
   return { year: now.getFullYear(), month: now.getMonth() + 1 };
 }
 
+function readDateParam(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const dateParam = params.get('date');
+  return dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : null;
+}
+
+function getInitialRouteState() {
+  const dateParam = readDateParam();
+  if (!dateParam) {
+    return { ...getInitialYearMonth(), pendingDate: null as string | null };
+  }
+
+  const [year, month] = dateParam.split('-').map(Number);
+  return { year, month, pendingDate: dateParam };
+}
+
 export default function CalendarPage() {
-  const [{ year, month }, setYearMonth] = useState(getInitialYearMonth);
+  const [initialRouteState] = useState(getInitialRouteState);
+  const [{ year, month }, setYearMonth] = useState(() => ({
+    year: initialRouteState.year,
+    month: initialRouteState.month,
+  }));
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true); // 初回ロードのみ全画面オーバーレイ
   const [syncing, setSyncing] = useState(false); // 月切り替え時のヘッダースピナー
   const [authError, setAuthError] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  // 通知タップ時の /?date=YYYY-MM-DD パラメータで自動表示する日付
-  const [pendingDate, setPendingDate] = useState<string | null>(null);
+  // 通知タップ時の /?date=YYYY-MM-DD パラメータで一度だけ消費する日付
+  const pendingDateRef = useRef<string | null>(initialRouteState.pendingDate);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showYearMonthPicker, setShowYearMonthPicker] = useState(false);
@@ -138,25 +159,11 @@ export default function CalendarPage() {
     return () => window.clearTimeout(timer);
   }, [googleSyncError, googleSyncMessage]);
 
-  // 通知タップ時の date パラメータを読み取り、対象月へ移動してDayModalを予約する
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const dateParam = params.get('date');
-    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-      const [y, m] = dateParam.split('-').map(Number);
-      setPendingDate(dateParam);
-      setYearMonth({ year: y, month: m });
-      // URLを即座にクリーンアップ
+    if (pendingDateRef.current) {
       window.history.replaceState({}, '', '/');
     }
   }, []);
-
-  // イベント読み込み完了後に pendingDate の DayModal を開く
-  useEffect(() => {
-    if (!pendingDate || loading) return;
-    setSelectedDate(pendingDate);
-    setPendingDate(null);
-  }, [pendingDate, loading]);
 
   // 認証済み・初回ロード完了後に通知許可プロンプトを表示するか判定する。
   // Notification.requestPermission() はユーザー操作（ボタンタップ）に紐づけて呼ぶため、ここでは表示判定のみ。
@@ -234,6 +241,10 @@ export default function CalendarPage() {
 
     if (!isRefreshTriggered && cacheRef.current[key]) {
       setEvents(cacheRef.current[key]);
+      if (pendingDateRef.current) {
+        setSelectedDate(pendingDateRef.current);
+        pendingDateRef.current = null;
+      }
       return;
     }
 
@@ -253,6 +264,10 @@ export default function CalendarPage() {
         if (cancelled) return;
         cacheRef.current[key] = data.events;
         setEvents(data.events);
+        if (pendingDateRef.current) {
+          setSelectedDate(pendingDateRef.current);
+          pendingDateRef.current = null;
+        }
         hasLoadedRef.current = true;
       })
       .catch((err: unknown) => {
