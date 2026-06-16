@@ -559,10 +559,10 @@ function TimeButton({ value, isLast = false, onClick }: TimeButtonProps) {
     <button
       type="button"
       onClick={onClick}
-      className={`shrink-0 h-9 px-3 rounded-lg text-sm font-medium ${
+      className={`shrink-0 h-9 rounded-lg px-3 font-medium transition-colors active:bg-zinc-200 ${
         isLast
-          ? 'border border-zinc-200 bg-zinc-100 text-zinc-700'
-          : 'bg-zinc-100 text-zinc-900'
+          ? 'border border-zinc-200 bg-zinc-100 text-zinc-900 text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]'
+          : 'bg-zinc-100 text-zinc-900 text-sm'
       }`}
     >
       {value}
