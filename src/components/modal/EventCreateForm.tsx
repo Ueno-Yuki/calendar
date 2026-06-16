@@ -405,18 +405,25 @@ export default function EventCreateForm({
           <div className="flex items-center">
             <span className="text-sm text-zinc-500 shrink-0">終了</span>
             <div className="ml-auto flex items-center gap-2">
-              {showLastOption && !allDay && (
+              {showLastOption && !allDay && !isLast && (
                 <LastToggleChip
-                  checked={isLast}
-                  onClick={() => setIsLast((current) => !current)}
+                  onClick={() => setIsLast(true)}
                 />
               )}
               <DateButton value={endDate} min={startDate} onChange={setEndDate} label="終了日" />
-              {!allDay && !isLast && (
-                <TimeButton
-                  value={endTime}
-                  onClick={() => setTimePickerFor('end')}
-                />
+              {!allDay && (
+                isLast ? (
+                  <TimeButton
+                    value="ラスト"
+                    isLast
+                    onClick={() => setIsLast(false)}
+                  />
+                ) : (
+                  <TimeButton
+                    value={endTime}
+                    onClick={() => setTimePickerFor('end')}
+                  />
+                )
               )}
             </div>
           </div>
@@ -564,31 +571,20 @@ function TimeButton({ value, isLast = false, onClick }: TimeButtonProps) {
 }
 
 interface LastToggleChipProps {
-  checked: boolean;
   onClick: () => void;
 }
 
-function LastToggleChip({ checked, onClick }: LastToggleChipProps) {
+function LastToggleChip({ onClick }: LastToggleChipProps) {
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-pressed={checked}
-      className={`shrink-0 inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold ${
-        checked
-          ? 'bg-zinc-800 text-white'
-          : 'bg-zinc-100 text-zinc-600'
-      }`}
+      aria-pressed="false"
+      className="shrink-0 inline-flex h-9 items-center gap-1.5 rounded-full bg-zinc-100 px-3 text-xs font-semibold text-zinc-600"
     >
       <span>ラスト</span>
-      <span
-        className={`rounded-full px-1.5 py-0.5 text-[10px] leading-none ${
-          checked
-            ? 'bg-white/20 text-white'
-            : 'bg-white text-zinc-500'
-        }`}
-      >
-        {checked ? 'ON' : 'OFF'}
+      <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] leading-none text-zinc-500">
+        OFF
       </span>
     </button>
   );
