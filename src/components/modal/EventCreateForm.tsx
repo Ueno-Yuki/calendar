@@ -90,6 +90,7 @@ export default function EventCreateForm({
   const [errors, setErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [suggestions, setSuggestions] = useState<EventTemplate[]>([]);
+  const [suppressSuggestions, setSuppressSuggestions] = useState(false);
 
   // どの時刻ピッカーを開いているか
   const [timePickerFor, setTimePickerFor] = useState<'start' | 'end' | null>(null);
@@ -103,6 +104,7 @@ export default function EventCreateForm({
   }, [showLastOption]);
 
   useEffect(() => {
+    if (suppressSuggestions) return;
     const query = title.trim();
     if (!query) { setSuggestions([]); return; }
     const timer = setTimeout(async () => {
@@ -116,7 +118,7 @@ export default function EventCreateForm({
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [title, currentRole]);
+  }, [title, currentRole, suppressSuggestions]);
 
   useEffect(() => {
     if (!currentRole) return;
@@ -135,6 +137,7 @@ export default function EventCreateForm({
   };
 
   const applyTemplate = (template: EventTemplate) => {
+    setSuppressSuggestions(true);
     setTitle(template.title);
     if (template.start_time) setStartTime(template.start_time);
     if (template.end_time) {
@@ -284,7 +287,10 @@ export default function EventCreateForm({
           <input
             type="text"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              setSuppressSuggestions(false);
+              setTitle(e.target.value);
+            }}
             placeholder="予定のタイトル"
             style={{ fontSize: 22 }}
             className="w-full font-semibold text-zinc-900 placeholder-zinc-400 bg-transparent focus:outline-none"
