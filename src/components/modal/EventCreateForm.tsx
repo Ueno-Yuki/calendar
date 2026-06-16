@@ -57,7 +57,6 @@ interface Props {
   dateStr: string;
   mode?: 'create' | 'edit';
   initialEvent?: Event;
-  hasPendingRefresh?: boolean;
   onSaved: () => void;
   onCancel: () => void;
 }
@@ -66,7 +65,6 @@ export default function EventCreateForm({
   dateStr,
   mode = 'create',
   initialEvent,
-  hasPendingRefresh = false,
   onSaved,
   onCancel,
 }: Props) {
@@ -271,13 +269,6 @@ export default function EventCreateForm({
 
       {/* スクロール可能なフォーム本体 */}
       <div className="overflow-y-auto flex-1 pb-8">
-
-        {hasPendingRefresh && (
-          <div className="mx-4 mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-600">
-            <p>他の家族が予定を更新しました</p>
-            <p>保存後に反映されます</p>
-          </div>
-        )}
 
         {/* エラーバナー */}
         {errors.length > 0 && (

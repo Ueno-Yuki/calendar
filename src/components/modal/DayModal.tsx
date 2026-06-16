@@ -20,7 +20,6 @@ interface Props {
   onClose: () => void;
   onEventCreated: () => void;
   onEventDeleted: () => void;
-  hasPendingRefresh: boolean;
   onRefreshBlockChange: (blocked: boolean) => void;
 }
 
@@ -41,7 +40,6 @@ export default function DayModal({
   onClose,
   onEventCreated,
   onEventDeleted,
-  hasPendingRefresh,
   onRefreshBlockChange,
 }: Props) {
   const [mode, setMode] = useState<'schedule' | 'create' | 'edit'>('schedule');
@@ -165,7 +163,6 @@ export default function DayModal({
         {mode === 'create' ? (
           <EventCreateForm
             dateStr={dateStr}
-            hasPendingRefresh={hasPendingRefresh}
             onSaved={handleSaved}
             onCancel={() => setMode('schedule')}
           />
@@ -174,7 +171,6 @@ export default function DayModal({
             dateStr={eventToEdit.start_date}
             mode="edit"
             initialEvent={eventToEdit}
-            hasPendingRefresh={hasPendingRefresh}
             onSaved={handleEditSaved}
             onCancel={handleEditCancel}
           />
@@ -265,7 +261,6 @@ export default function DayModal({
           onCancel={handleDeleteCancel}
           onConfirm={handleDeleteConfirm}
           isDeleting={isDeleting}
-          hasPendingRefresh={hasPendingRefresh}
         />
       )}
     </>

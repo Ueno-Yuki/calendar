@@ -37,18 +37,24 @@ export default function CalendarPage() {
   const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
   const notificationPromptCheckedRef = useRef(false);
 
-  // ポーリング・保留更新UX状態
-  const [hasPendingRefresh, setHasPendingRefresh] = useState(false);
+  // ポーリング・手動更新UX状態
+  const [knownLastUpdatedAt, setKnownLastUpdatedAt] = useState<string | null | undefined>(undefined);
+  const [hasRemoteUpdates, setHasRemoteUpdates] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRefreshBlocked, setIsRefreshBlocked] = useState(false);
 
   // refでクロージャ内から最新状態を参照する
   const isRefreshBlockedRef = useRef(false);
-  const hasPendingRefreshRef = useRef(false);
-  // undefined = 未初期化, null = サーバー未設定, string = ISO日時
   const knownLastUpdatedAtRef = useRef<string | null | undefined>(undefined);
+  const refreshCompletionRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    hasPendingRefreshRef.current = hasPendingRefresh;
-  }, [hasPendingRefresh]);
+    knownLastUpdatedAtRef.current = knownLastUpdatedAt;
+  }, [knownLastUpdatedAt]);
+
+  useEffect(() => {
+    isRefreshBlockedRef.current = isRefreshBlocked;
+  }, [isRefreshBlocked]);
 
   // 通知タップ時の date パラメータを読み取り、対象月へ移動してDayModalを予約する
   useEffect(() => {
@@ -104,34 +110,36 @@ export default function CalendarPage() {
   const prevRefreshKeyRef = useRef(0);
   const hasLoadedRef = useRef(false);
 
-  // 自分の操作後に knownLastUpdatedAt をサーバーと同期し、次のポーリングで誤検知しないようにする
-  const refreshKnownLastUpdated = useCallback(async () => {
+  const fetchLastUpdatedAt = useCallback(async (): Promise<string | null | undefined> => {
     try {
       const res = await apiFetch('/api/events/last-updated');
       if (res.ok) {
         const data = (await res.json()) as { lastUpdatedAt: string | null };
-        knownLastUpdatedAtRef.current = data.lastUpdatedAt;
+        return data.lastUpdatedAt;
       }
     } catch {
       // ignore
     }
+    return undefined;
   }, []);
 
-  const reloadEvents = useCallback(() => {
+  const setKnownLastUpdated = useCallback((value: string | null) => {
+    knownLastUpdatedAtRef.current = value;
+    setKnownLastUpdatedAt(value);
+  }, []);
+
+  // 自分の操作後に knownLastUpdatedAt をサーバーと同期し、次のポーリングで誤検知しないようにする
+  const refreshKnownLastUpdated = useCallback(async () => {
+    const latest = await fetchLastUpdatedAt();
+    if (latest !== undefined) setKnownLastUpdated(latest);
+  }, [fetchLastUpdatedAt, setKnownLastUpdated]);
+
+  const reloadEvents = useCallback((): Promise<void> => {
     setRefreshKey((k) => k + 1);
+    return new Promise((resolve) => {
+      refreshCompletionRef.current = resolve;
+    });
   }, []);
-
-  const clearPendingRefresh = useCallback(() => {
-    hasPendingRefreshRef.current = false;
-    setHasPendingRefresh(false);
-  }, []);
-
-  const applyPendingRefreshIfNeeded = useCallback(() => {
-    if (!hasPendingRefreshRef.current) return;
-    reloadEvents();
-    clearPendingRefresh();
-  }, [clearPendingRefresh, reloadEvents]);
-
 
   useEffect(() => {
     const key = `${year}-${String(month).padStart(2, '0')}`;
@@ -172,6 +180,8 @@ export default function CalendarPage() {
         if (!cancelled) {
           setLoading(false);
           setSyncing(false);
+          refreshCompletionRef.current?.();
+          refreshCompletionRef.current = null;
         }
       });
 
@@ -180,7 +190,7 @@ export default function CalendarPage() {
     };
   }, [year, month, refreshKey]);
 
-  // 30秒ポーリング: 他の家族の予定変更を検知してリロードまたは保留する
+  // 30秒ポーリング: 他の家族の予定変更を検知する（ここでは自動更新しない）
   useEffect(() => {
     if (authError || loading) return;
 
@@ -189,13 +199,12 @@ export default function CalendarPage() {
     const poll = async () => {
       if (cancelled || document.hidden) return;
       try {
-        const res = await apiFetch('/api/events/last-updated');
-        if (!res.ok || cancelled) return;
-        const { lastUpdatedAt } = (await res.json()) as { lastUpdatedAt: string | null };
+        const lastUpdatedAt = await fetchLastUpdatedAt();
+        if (lastUpdatedAt === undefined || cancelled) return;
 
         // 初回ポーリング: 現在値を記録するだけ
         if (knownLastUpdatedAtRef.current === undefined) {
-          knownLastUpdatedAtRef.current = lastUpdatedAt;
+          setKnownLastUpdated(lastUpdatedAt);
           return;
         }
 
@@ -206,16 +215,7 @@ export default function CalendarPage() {
           (knownLastUpdatedAtRef.current === null || lastUpdatedAt > knownLastUpdatedAtRef.current);
 
         if (!isNewer) return;
-        knownLastUpdatedAtRef.current = lastUpdatedAt;
-
-        if (isRefreshBlockedRef.current) {
-          // 登録・編集・削除確認中 → 入力内容を守るため保留
-          hasPendingRefreshRef.current = true;
-          setHasPendingRefresh(true);
-        } else {
-          // 通常時・予定一覧表示中 → DayModalを閉じずに予定だけ差し替える
-          reloadEvents();
-        }
+        setHasRemoteUpdates(true);
       } catch {
         // ネットワークエラー等は無視
       }
@@ -235,7 +235,7 @@ export default function CalendarPage() {
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [authError, loading, reloadEvents]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authError, fetchLastUpdatedAt, loading, setKnownLastUpdated]);
 
   const goPrevMonth = () =>
     setYearMonth(({ year: y, month: m }) =>
@@ -247,31 +247,43 @@ export default function CalendarPage() {
       m === 12 ? { year: y + 1, month: 1 } : { year: y, month: m + 1 },
     );
 
-  // DayModal を閉じる時: hasPendingRefresh があればリロード
   const handleDayModalClose = () => {
     setSelectedDate(null);
     isRefreshBlockedRef.current = false;
-    applyPendingRefreshIfNeeded();
+    setIsRefreshBlocked(false);
   };
 
-  // 予定保存・削除後: リロード & 保留状態リセット
+  // 予定保存・削除後: 自分の操作は即時反映し、ポーリングの既知値を更新する
   // refreshKnownLastUpdated で自分の操作を knownLastUpdatedAt に反映し、次のポーリングで二重リロードしない
   const handleEventCreated = () => {
-    reloadEvents();
-    clearPendingRefresh();
+    void reloadEvents();
+    setHasRemoteUpdates(false);
     refreshKnownLastUpdated();
   };
 
   const handleEventDeleted = () => {
-    reloadEvents();
-    clearPendingRefresh();
+    void reloadEvents();
+    setHasRemoteUpdates(false);
     refreshKnownLastUpdated();
   };
 
   const handleRefreshBlockChange = useCallback((blocked: boolean) => {
     isRefreshBlockedRef.current = blocked;
-    if (!blocked) applyPendingRefreshIfNeeded();
-  }, [applyPendingRefreshIfNeeded]);
+    setIsRefreshBlocked(blocked);
+  }, []);
+
+  const handleManualRefresh = useCallback(async () => {
+    if (isRefreshBlockedRef.current || isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await reloadEvents();
+      const latest = await fetchLastUpdatedAt();
+      if (latest !== undefined) setKnownLastUpdated(latest);
+      setHasRemoteUpdates(false);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [fetchLastUpdatedAt, isRefreshing, reloadEvents, setKnownLastUpdated]);
 
   if (authError) {
     return (
@@ -289,6 +301,10 @@ export default function CalendarPage() {
         year={year}
         month={month}
         syncing={syncing}
+        hasRemoteUpdates={hasRemoteUpdates}
+        isRefreshing={isRefreshing}
+        refreshDisabled={isRefreshBlocked}
+        onRefresh={handleManualRefresh}
         onSettingsOpen={() => setShowSettings(true)}
         onYearMonthPress={() => setShowYearMonthPicker(true)}
       />
@@ -300,6 +316,8 @@ export default function CalendarPage() {
         loading={loading}
         onPrevMonth={goPrevMonth}
         onNextMonth={goNextMonth}
+        onRefresh={handleManualRefresh}
+        refreshDisabled={isRefreshBlocked || isRefreshing}
         onDayPress={(dateStr) => setSelectedDate(dateStr)}
       />
       {selectedDate && (
@@ -309,7 +327,6 @@ export default function CalendarPage() {
           onClose={handleDayModalClose}
           onEventCreated={handleEventCreated}
           onEventDeleted={handleEventDeleted}
-          hasPendingRefresh={hasPendingRefresh}
           onRefreshBlockChange={handleRefreshBlockChange}
         />
       )}

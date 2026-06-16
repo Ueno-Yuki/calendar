@@ -8,7 +8,6 @@ interface Props {
   onCancel: () => void;
   onConfirm: () => void;
   isDeleting: boolean;
-  hasPendingRefresh?: boolean;
 }
 
 function formatDateTime(date: string, time: string): string {
@@ -22,7 +21,6 @@ export default function DeleteConfirmModal({
   onCancel,
   onConfirm,
   isDeleting,
-  hasPendingRefresh = false,
 }: Props) {
   const startLabel = formatDateTime(event.start_date, event.all_day ? '' : event.start_time);
   const endLabel = formatDateTime(event.end_date, event.all_day ? '' : event.end_time);
@@ -46,13 +44,6 @@ export default function DeleteConfirmModal({
         <h3 className="text-base font-semibold text-zinc-900 text-center mb-4">
           この予定を削除しますか？
         </h3>
-
-        {hasPendingRefresh && (
-          <div className="mb-4 rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-600">
-            <p>他の家族が予定を更新しました</p>
-            <p>保存後に反映されます</p>
-          </div>
-        )}
 
         {/* Event summary */}
         <div className="bg-zinc-50 rounded-xl px-4 py-3 mb-5 space-y-1.5">
