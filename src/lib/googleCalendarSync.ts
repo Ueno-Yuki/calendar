@@ -367,6 +367,8 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
 // POST /api/sync/google から呼ばれる。
 // 取得範囲: Asia/Tokyo基準の当年のみ（繰り返し予定の将来年大量登録を防ぐ）
 // DISABLE_GOOGLE_SYNC=true の場合は何もしない。
+// Google同期由来の追加・更新・削除は即時Push通知と notification_logs の対象外。
+// 差分があった場合のみ events_last_updated_at を更新し、他端末の更新バッジに反映する。
 
 export async function syncGoogleToApp(colorIds: string[]): Promise<SyncResult> {
   if (isSyncDisabled()) {
