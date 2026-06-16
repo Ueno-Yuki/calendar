@@ -9,6 +9,12 @@ import type { StoredUser } from '@/lib/auth';
 import type { Event } from '@/types';
 import { isKappaTitle, formatEndTime, KAPPA_LAST_END_TIME } from '@/lib/kappaShift';
 import TimePickerSheet from '@/components/modal/TimePickerSheet';
+import {
+  DEFAULT_QUIET_HOURS,
+  isInQuietHours,
+  normalizeQuietHoursSettings,
+  type QuietHoursSettings,
+} from '@/lib/quietHours';
 
 const DOW_JA = ['日', '月', '火', '水', '木', '金', '土'];
 
@@ -36,12 +42,6 @@ function formatDateShort(dateStr: string): string {
   return `${d.getMonth() + 1}/${d.getDate()}(${DOW_JA[d.getDay()]})`;
 }
 
-/** クライアント側 JST 静音時間帯判定（22:00〜07:59）。サーバー通知制御とは独立した表示用。 */
-function isQuietHoursJst(): boolean {
-  const jstHour = (new Date().getUTCHours() + 9) % 24;
-  return jstHour >= 22 || jstHour < 8;
-}
-
 function readCurrentRole(): FamilyRole | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -63,7 +63,6 @@ interface Props {
 
 export default function EventCreateForm({ dateStr, mode = 'create', initialEvent, onSaved, onCancel }: Props) {
   const now = new Date();
-  const [isQuiet] = useState(isQuietHoursJst);
   // 編集モードでは既存予定の値を初期値として使用する
   const initStartTime = initialEvent?.start_time || roundTo5Min(now);
   const initIsLast = !!initialEvent?.end_time && initialEvent.end_time === KAPPA_LAST_END_TIME;
@@ -72,6 +71,7 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
     : initialEvent.end_time;
 
   const [currentRole] = useState<FamilyRole | null>(readCurrentRole);
+  const [quietHours, setQuietHours] = useState<QuietHoursSettings>(DEFAULT_QUIET_HOURS);
   const [title, setTitle] = useState(initialEvent?.title ?? '');
   const [startDate, setStartDate] = useState(initialEvent?.start_date ?? dateStr);
   const [endDate, setEndDate] = useState(initialEvent?.end_date ?? dateStr);
@@ -111,6 +111,16 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
     }, 300);
     return () => clearTimeout(timer);
   }, [title, currentRole]);
+
+  useEffect(() => {
+    if (!currentRole) return;
+    apiFetch('/api/settings/notifications')
+      .then((res) => (res.ok ? (res.json() as Promise<Partial<QuietHoursSettings>>) : null))
+      .then((data) => {
+        if (data) setQuietHours(normalizeQuietHoursSettings(data));
+      })
+      .catch(() => {});
+  }, [currentRole]);
 
   const handleDeleteTemplate = (id: string) => {
     // 楽観的UI更新: 即座にリストから除去してからAPIを呼ぶ
@@ -223,6 +233,7 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
   };
 
   const showSuggestions = suggestions.length > 0 && title.trim().length > 0;
+  const showQuietHoursNotice = isInQuietHours(quietHours);
 
   return (
     <div className="flex flex-col h-full">
@@ -411,10 +422,12 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
         </ListRow>
 
         {/* お休みモード補足（通知停止時間帯の控えめな注釈） */}
-        {isQuiet && (
+        {showQuietHoursNotice && (
           <div className="flex items-center gap-1 mt-2 px-4 text-xs text-slate-500">
             <BellOff className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-            <span>お休みモード中（22:00〜7:59）は通知されません</span>
+            <span>
+              お休みモード中（{quietHours.quiet_hours_start}〜{quietHours.quiet_hours_end}）は通知されません
+            </span>
           </div>
         )}
 

@@ -1,5 +1,10 @@
 import { getRows, appendRow, updateRow, ensureSheet } from '@/lib/sheets';
 import type { FamilyRole } from '@/types';
+import {
+  DEFAULT_QUIET_HOURS,
+  normalizeQuietHoursSettings,
+  type QuietHoursSettings,
+} from '@/lib/quietHours';
 
 const SHEET = 'users';
 const HEADERS = [
@@ -7,9 +12,10 @@ const HEADERS = [
   'notification_enabled', 'daily_summary_enabled',
   'instant_event_created_enabled', 'instant_event_deleted_enabled',
   'created_at', 'updated_at',
+  'quiet_hours_enabled', 'quiet_hours_start', 'quiet_hours_end',
 ] as const;
 
-export interface NotificationSettings {
+export interface NotificationSettings extends QuietHoursSettings {
   notification_enabled: boolean;
   daily_summary_enabled: boolean;
   instant_event_created_enabled: boolean;
@@ -21,6 +27,7 @@ const DEFAULT_SETTINGS: NotificationSettings = {
   daily_summary_enabled: true,
   instant_event_created_enabled: true,
   instant_event_deleted_enabled: true,
+  ...DEFAULT_QUIET_HOURS,
 };
 
 async function ensureUsersSheet(): Promise<void> {
@@ -46,11 +53,17 @@ export async function getNotificationSettings(role: FamilyRole): Promise<Notific
   const found = await findUserRow(role);
   if (!found) return { ...DEFAULT_SETTINGS };
   const { row } = found;
+  const quietHours = normalizeQuietHoursSettings({
+    quiet_hours_enabled: row.quiet_hours_enabled !== 'FALSE',
+    quiet_hours_start: row.quiet_hours_start,
+    quiet_hours_end: row.quiet_hours_end,
+  });
   return {
     notification_enabled: row.notification_enabled !== 'FALSE',
     daily_summary_enabled: row.daily_summary_enabled !== 'FALSE',
     instant_event_created_enabled: row.instant_event_created_enabled !== 'FALSE',
     instant_event_deleted_enabled: row.instant_event_deleted_enabled !== 'FALSE',
+    ...quietHours,
   };
 }
 
@@ -75,6 +88,9 @@ export async function upsertNotificationSettings(
       b(settings.instant_event_created_enabled),
       b(settings.instant_event_deleted_enabled),
       now, now,
+      b(settings.quiet_hours_enabled),
+      settings.quiet_hours_start,
+      settings.quiet_hours_end,
     ]);
   } else {
     const { row, idx } = found;
@@ -89,6 +105,9 @@ export async function upsertNotificationSettings(
       b(settings.instant_event_deleted_enabled),
       row.created_at || now,
       now,
+      b(settings.quiet_hours_enabled),
+      settings.quiet_hours_start,
+      settings.quiet_hours_end,
     ]);
   }
 }

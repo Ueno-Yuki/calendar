@@ -6,7 +6,6 @@ import { getEnabledSubscriptions, disablePushSubscription } from '@/lib/pushSubs
 import { getNotificationSettings } from '@/lib/usersDb';
 import { sendPushToSubscription } from '@/lib/webPush';
 import { appendNotificationLog, hasDailySummarySent } from '@/lib/notificationsDb';
-import { isQuietHoursJst } from '@/lib/notificationService';
 import { isKappaShiftLast } from '@/lib/kappaShift';
 import { FAMILY_COLORS } from '@/lib/colors';
 
@@ -99,8 +98,9 @@ export function buildDailySummaryBody(events: Event[]): string {
 
 /**
  * 今日の予定サマリー通知を実行する。
- * Vercel Cron（毎日 UTC 23:00 = JST 08:00）から呼ばれる想定。
+ * Vercel Cron（毎日 UTC 21:00 = JST 06:00）から呼ばれる想定。
  * - 予定が0件の日は何もしない
+ * - 朝の定期通知のため、お休みモードの対象外
  * - 送信失敗は notification_logs に記録するが呼び出し元へは伝播させない
  * - 1ユーザーの失敗が他ユーザーの通知を止めない
  */
@@ -120,7 +120,6 @@ export async function runDailySummary(): Promise<void> {
   });
 
   const now = new Date().toISOString();
-  const quiet = isQuietHoursJst();
 
   // 購読情報と通知設定を並列取得
   const [subscriptions, ...settingsArr] = await Promise.all([
@@ -144,20 +143,6 @@ export async function runDailySummary(): Promise<void> {
 
     // サブスクリプションごとに送信
     for (const sub of userSubs) {
-      if (quiet) {
-        appendNotificationLog({
-          type: 'daily_summary',
-          event_id: '',
-          date: today,
-          target_user_id: role,
-          scheduled_at: now,
-          sent_at: now,
-          status: 'skipped',
-          error_message: 'quiet_hours',
-        }).catch(() => {});
-        continue;
-      }
-
       try {
         await sendPushToSubscription(sub, payload);
         appendNotificationLog({

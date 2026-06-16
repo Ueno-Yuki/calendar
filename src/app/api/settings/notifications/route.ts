@@ -5,6 +5,7 @@ import {
   upsertNotificationSettings,
   type NotificationSettings,
 } from '@/lib/usersDb';
+import { DEFAULT_QUIET_HOURS, isValidTime } from '@/lib/quietHours';
 
 // GET /api/settings/notifications
 // 現在の利用者の通知設定を返す。users シートに行がなければデフォルト値を返す。
@@ -28,8 +29,9 @@ export async function GET(request: NextRequest) {
 }
 
 // PUT /api/settings/notifications
-// Body: { notification_enabled, daily_summary_enabled, instant_event_created_enabled, instant_event_deleted_enabled }
-// 未指定フィールドは true (デフォルト有効) として扱う。
+// Body: { notification_enabled, daily_summary_enabled, instant_event_created_enabled,
+// instant_event_deleted_enabled, quiet_hours_enabled, quiet_hours_start, quiet_hours_end }
+// 未指定フィールドは現在値（行がなければデフォルト値）を維持する。
 export async function PUT(request: NextRequest) {
   let currentUser: { role: Parameters<typeof upsertNotificationSettings>[0] };
   try {
@@ -49,14 +51,29 @@ export async function PUT(request: NextRequest) {
   }
 
   const b = body as Partial<NotificationSettings>;
-  const settings: NotificationSettings = {
-    notification_enabled: b.notification_enabled !== false,
-    daily_summary_enabled: b.daily_summary_enabled !== false,
-    instant_event_created_enabled: b.instant_event_created_enabled !== false,
-    instant_event_deleted_enabled: b.instant_event_deleted_enabled !== false,
-  };
+  if (b.quiet_hours_start !== undefined && !isValidTime(b.quiet_hours_start)) {
+    return Response.json({ error: 'quiet_hours_start は HH:MM 形式で指定してください' }, { status: 400 });
+  }
+  if (b.quiet_hours_end !== undefined && !isValidTime(b.quiet_hours_end)) {
+    return Response.json({ error: 'quiet_hours_end は HH:MM 形式で指定してください' }, { status: 400 });
+  }
 
   try {
+    const current = await getNotificationSettings(currentUser.role);
+    const settings: NotificationSettings = {
+      notification_enabled: b.notification_enabled ?? current.notification_enabled,
+      daily_summary_enabled: b.daily_summary_enabled ?? current.daily_summary_enabled,
+      instant_event_created_enabled:
+        b.instant_event_created_enabled ?? current.instant_event_created_enabled,
+      instant_event_deleted_enabled:
+        b.instant_event_deleted_enabled ?? current.instant_event_deleted_enabled,
+      quiet_hours_enabled:
+        b.quiet_hours_enabled ?? current.quiet_hours_enabled ?? DEFAULT_QUIET_HOURS.quiet_hours_enabled,
+      quiet_hours_start:
+        b.quiet_hours_start ?? current.quiet_hours_start ?? DEFAULT_QUIET_HOURS.quiet_hours_start,
+      quiet_hours_end:
+        b.quiet_hours_end ?? current.quiet_hours_end ?? DEFAULT_QUIET_HOURS.quiet_hours_end,
+    };
     await upsertNotificationSettings(currentUser.role, settings);
     return Response.json(settings);
   } catch {

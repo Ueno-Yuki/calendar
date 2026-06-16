@@ -110,7 +110,26 @@ export async function ensureSheet(
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
   const exists = meta.data.sheets?.some((s) => s.properties?.title === sheetName) ?? false;
 
-  if (exists) return;
+  if (exists) {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!1:1`,
+    });
+    const currentHeaders = (res.data.values?.[0] as string[] | undefined) ?? [];
+    const mergedHeaders = [...currentHeaders];
+    headers.forEach((header) => {
+      if (!mergedHeaders.includes(header)) mergedHeaders.push(header);
+    });
+    if (mergedHeaders.length !== currentHeaders.length) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [mergedHeaders] },
+      });
+    }
+    return;
+  }
 
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,

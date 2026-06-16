@@ -8,12 +8,16 @@ import type { StoredUser } from '@/lib/auth';
 import { FAMILY_COLORS } from '@/lib/colors';
 import type { FamilyRole } from '@/types';
 import { subscribePush, getNotificationPermission } from '@/lib/pushClient';
+import { DEFAULT_QUIET_HOURS } from '@/lib/quietHours';
 
 interface NotificationSettings {
   notification_enabled: boolean;
   daily_summary_enabled: boolean;
   instant_event_created_enabled: boolean;
   instant_event_deleted_enabled: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string;
+  quiet_hours_end: string;
 }
 
 const DEFAULT_SETTINGS: NotificationSettings = {
@@ -21,7 +25,37 @@ const DEFAULT_SETTINGS: NotificationSettings = {
   daily_summary_enabled: true,
   instant_event_created_enabled: true,
   instant_event_deleted_enabled: true,
+  ...DEFAULT_QUIET_HOURS,
 };
+
+type BooleanSettingKey =
+  | 'notification_enabled'
+  | 'daily_summary_enabled'
+  | 'instant_event_created_enabled'
+  | 'instant_event_deleted_enabled'
+  | 'quiet_hours_enabled';
+
+type TimeSettingKey = 'quiet_hours_start' | 'quiet_hours_end';
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function buildTimeOptions(): string[] {
+  const options: string[] = [];
+  for (let h = 0; h < 24; h += 1) {
+    for (let m = 0; m < 60; m += 5) {
+      options.push(`${pad2(h)}:${pad2(m)}`);
+    }
+  }
+  if (!options.includes(DEFAULT_QUIET_HOURS.quiet_hours_end)) {
+    options.push(DEFAULT_QUIET_HOURS.quiet_hours_end);
+    options.sort();
+  }
+  return options;
+}
+
+const TIME_OPTIONS = buildTimeOptions();
 
 function readCurrentRole(): FamilyRole | null {
   if (typeof window === 'undefined') return null;
@@ -96,8 +130,12 @@ export default function SettingsModal({ onClose }: Props) {
     }).catch(() => {});
   };
 
-  const handleToggle = (key: keyof NotificationSettings) => {
+  const handleToggle = (key: BooleanSettingKey) => {
     saveSettings({ ...settings, [key]: !settings[key] });
+  };
+
+  const handleTimeChange = (key: TimeSettingKey, value: string) => {
+    saveSettings({ ...settings, [key]: value });
   };
 
   const handleRequestPermission = async () => {
@@ -283,7 +321,7 @@ export default function SettingsModal({ onClose }: Props) {
                   <p className={`text-sm ${settings.notification_enabled ? 'text-zinc-700' : 'text-zinc-400'}`}>
                     今日の予定通知
                   </p>
-                  <p className="text-xs text-zinc-400 mt-0.5">毎朝8時にお知らせ</p>
+                  <p className="text-xs text-zinc-400 mt-0.5">毎朝6時にお知らせ</p>
                 </div>
                 <Toggle
                   checked={settings.daily_summary_enabled}
@@ -328,8 +366,72 @@ export default function SettingsModal({ onClose }: Props) {
             </div>
           </section>
 
+          <div className="h-px bg-zinc-100 mx-4" />
+
+          {/* お休みモード */}
+          <section className="px-4 pt-5 pb-8">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide">
+                  お休みモード
+                </p>
+                <p className="text-xs text-zinc-400 mt-1">通知を止める時間を設定します</p>
+              </div>
+              <Toggle
+                checked={settings.quiet_hours_enabled}
+                onChange={() => handleToggle('quiet_hours_enabled')}
+              />
+            </div>
+
+            <div className="rounded-xl border border-zinc-100 overflow-hidden bg-zinc-50">
+              <TimeSelectRow
+                label="開始"
+                value={settings.quiet_hours_start}
+                onChange={(value) => handleTimeChange('quiet_hours_start', value)}
+                disabled={!settings.quiet_hours_enabled}
+              />
+              <div className="h-px bg-zinc-100" />
+              <TimeSelectRow
+                label="終了"
+                value={settings.quiet_hours_end}
+                onChange={(value) => handleTimeChange('quiet_hours_end', value)}
+                disabled={!settings.quiet_hours_enabled}
+              />
+            </div>
+          </section>
+
         </div>
       </div>
     </>
+  );
+}
+
+function TimeSelectRow({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="flex items-center justify-between px-4 py-3.5 bg-white">
+      <span className={`text-sm ${disabled ? 'text-zinc-400' : 'text-zinc-700'}`}>{label}</span>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 rounded-lg bg-zinc-100 px-3 text-sm font-medium text-zinc-900 disabled:text-zinc-400 disabled:opacity-70"
+      >
+        {TIME_OPTIONS.map((time) => (
+          <option key={time} value={time}>
+            {time}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

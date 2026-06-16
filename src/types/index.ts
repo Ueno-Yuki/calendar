@@ -4,7 +4,7 @@ export type EventSource = 'manual' | 'google';
 
 export type NotificationType = 'daily_summary' | 'event_created' | 'event_deleted';
 
-export type NotificationStatus = 'sent' | 'failed';
+export type NotificationStatus = 'sent' | 'failed' | 'skipped';
 
 export interface Event {
   id: string;
@@ -34,6 +34,9 @@ export interface User {
   daily_summary_enabled: boolean;
   instant_event_created_enabled: boolean;
   instant_event_deleted_enabled: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string; // HH:MM
+  quiet_hours_end: string;   // HH:MM
   created_at: string;
   updated_at: string;
 }

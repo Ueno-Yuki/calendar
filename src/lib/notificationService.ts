@@ -4,19 +4,9 @@ import { getEnabledSubscriptions, disablePushSubscription } from '@/lib/pushSubs
 import { getNotificationSettings } from '@/lib/usersDb';
 import { sendPushToSubscription } from '@/lib/webPush';
 import { appendNotificationLog } from '@/lib/notificationsDb';
+import { isInQuietHours } from '@/lib/quietHours';
 
 const DAY_OF_WEEK = ['日', '月', '火', '水', '木', '金', '土'] as const;
-
-/**
- * JST (UTC+9) ベースで静音時間帯（22:00〜07:59）かどうかを判定する。
- * サーバーのタイムゾーン設定に依存せず、UTC を基準に計算する。
- *
- * 判定: 22:00 <= jstHour || jstHour < 8
- */
-export function isQuietHoursJst(date = new Date()): boolean {
-  const jstHour = (date.getUTCHours() + 9) % 24;
-  return jstHour >= 22 || jstHour < 8;
-}
 
 function formatDate(dateStr: string): string {
   // dateStr: YYYY-MM-DD
@@ -72,7 +62,6 @@ export async function sendInstantNotification(
   const url = `/?date=${event.start_date}`;
   const payload = JSON.stringify({ title: notificationTitle, body, url });
   const now = new Date().toISOString();
-  const quiet = isQuietHoursJst();
 
   // 通知設定でフィルタした送信対象購読リスト
   const eligibleSubs = subscriptions.filter((sub) => {
@@ -86,8 +75,10 @@ export async function sendInstantNotification(
   });
 
   const sendTasks = eligibleSubs.map((sub) => {
-    // 静音時間帯（22:00〜07:59 JST）は送信せずにログを記録して正常終了
-    if (quiet) {
+    const settings = settingsMap[sub.userId as FamilyRole];
+
+    // 対象ユーザーのお休みモード中は送信せずにログを記録して正常終了
+    if (settings && isInQuietHours(settings)) {
       return appendNotificationLog({
         type,
         event_id: event.id,

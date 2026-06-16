@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server';
 import { runDailySummary } from '@/lib/dailySummary';
 
 // GET /api/cron/daily-summary
-// Vercel Cron から 10 分ごとに呼ばれ、通知時刻を過ぎたユーザーへ今日の予定サマリーを送信する。
+// Vercel Cron から毎日 UTC 21:00（JST 06:00）に呼ばれ、今日の予定サマリーを送信する。
 //
 // 認証:
 //   Authorization: Bearer <CRON_SECRET>  ← Vercel Cron が自動付与
