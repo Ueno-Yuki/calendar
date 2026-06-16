@@ -35,8 +35,16 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // 表示月を受け取り同期範囲を限定する（繰り返し予定の大量取得防止）
+  // 未指定の場合は JST 当月にフォールバック
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const yearParam = request.nextUrl.searchParams.get('year');
+  const monthParam = request.nextUrl.searchParams.get('month');
+  const displayYear = yearParam ? parseInt(yearParam, 10) : jstNow.getUTCFullYear();
+  const displayMonth = monthParam ? parseInt(monthParam, 10) : jstNow.getUTCMonth() + 1;
+
   try {
-    const result = await syncGoogleToApp();
+    const result = await syncGoogleToApp(displayYear, displayMonth);
     return Response.json(result);
   } catch {
     return Response.json({ synced: false, reason: 'error' }, { status: 500 });

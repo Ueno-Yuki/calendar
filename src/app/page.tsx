@@ -130,7 +130,7 @@ export default function CalendarPage() {
     isSyncingRef.current = true;
     setIsGoogleSyncing(true);
 
-    apiFetch('/api/sync/google', { method: 'POST' })
+    apiFetch(`/api/sync/google?year=${year}&month=${month}`, { method: 'POST' })
       .then((res) => (res.ok ? res.json() : null))
       .then((result: { synced?: boolean } | null) => {
         if (!result?.synced) return;
@@ -148,7 +148,7 @@ export default function CalendarPage() {
         isSyncingRef.current = false;
         setIsGoogleSyncing(false);
       });
-  }, []);
+  }, [year, month]);
 
   useEffect(() => {
     const key = `${year}-${String(month).padStart(2, '0')}`;

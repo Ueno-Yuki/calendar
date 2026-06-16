@@ -83,16 +83,43 @@ async function buildGoogleEventIdMap(): Promise<
   return map;
 }
 
-function todayTimeMin(): string {
-  const now = new Date();
-  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  return `${jst.toISOString().slice(0, 10)}T00:00:00+09:00`;
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+// JST基準の現在年を返す
+function jstCurrentYear(): number {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCFullYear();
+}
+
+// 初回取り込み用: Asia/Tokyo基準の当年のみ
+// timeMin = YYYY-01-01T00:00:00+09:00, timeMax = (YYYY+1)-01-01T00:00:00+09:00
+function jstYearRange(year: number): { timeMin: string; timeMax: string } {
+  return {
+    timeMin: `${year}-01-01T00:00:00+09:00`,
+    timeMax: `${year + 1}-01-01T00:00:00+09:00`,
+  };
+}
+
+// 通常同期用: 表示月の前月1日〜翌々月1日（3ヶ月ウィンドウ）
+// 例: 表示月 2026-06 → 2026-05-01 〜 2026-08-01
+function displayMonthRange(year: number, month: number): { timeMin: string; timeMax: string } {
+  const prevYear = month === 1 ? year - 1 : year;
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const rawAfterNext = month + 2;
+  const afterNextYear = rawAfterNext > 12 ? year + 1 : year;
+  const afterNextMonth = rawAfterNext > 12 ? rawAfterNext - 12 : rawAfterNext;
+  return {
+    timeMin: `${prevYear}-${pad2(prevMonth)}-01T00:00:00+09:00`,
+    timeMax: `${afterNextYear}-${pad2(afterNextMonth)}-01T00:00:00+09:00`,
+  };
 }
 
 // ---- 初回取り込み ----
 // OAuth認証完了直後に一度だけ実行する。
 // mother_google_import_completed = TRUE の場合はスキップ。
 // DISABLE_GOOGLE_SYNC=true の場合は何もしない。
+// 取得範囲: Asia/Tokyo基準の当年のみ（繰り返し予定の将来年大量登録を防ぐ）
 
 export async function importGoogleCalendar(): Promise<SyncResult> {
   if (isSyncDisabled()) {
@@ -109,9 +136,11 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
     return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'not_connected' };
   }
 
+  const { timeMin, timeMax } = jstYearRange(jstCurrentYear());
   const items = await listGCalItems(calendar, {
     calendarId: CALENDAR_ID(),
-    timeMin: todayTimeMin(),
+    timeMin,
+    timeMax,
     singleEvents: true,
     maxResults: 2500,
     showDeleted: false,
@@ -167,10 +196,11 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
 }
 
 // ---- 通常同期 Google → アプリ ----
-// クライアントが POST /api/sync/google を呼んだ時に実行する。
+// クライアントが POST /api/sync/google?year=YYYY&month=M を呼んだ時に実行する。
+// 取得範囲: 表示月の前月1日〜翌々月1日（3ヶ月ウィンドウ、繰り返し予定の大量取得を防ぐ）
 // DISABLE_GOOGLE_SYNC=true の場合は何もしない。
 
-export async function syncGoogleToApp(): Promise<SyncResult> {
+export async function syncGoogleToApp(displayYear: number, displayMonth: number): Promise<SyncResult> {
   if (isSyncDisabled()) {
     return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'sync_disabled' };
   }
@@ -180,10 +210,12 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
     return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'not_connected' };
   }
 
+  const { timeMin, timeMax } = displayMonthRange(displayYear, displayMonth);
   // 削除済み含めて取得することで Google 側の削除を検知できる
   const items = await listGCalItems(calendar, {
     calendarId: CALENDAR_ID(),
-    timeMin: todayTimeMin(),
+    timeMin,
+    timeMax,
     singleEvents: true,
     maxResults: 2500,
     showDeleted: true,
