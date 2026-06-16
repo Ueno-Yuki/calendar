@@ -204,6 +204,25 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
     if (endDate < val) setEndDate(val);
   };
 
+  // 開始時間変更時: 終了時間を開始+1時間に自動補完（日付またぎ対応）
+  const handleStartTimeSelect = (t: string) => {
+    setStartTime(t);
+    const [h, m] = t.split(':').map(Number);
+    const endTotalMin = h * 60 + m + 60;
+    const newEndH = Math.floor(endTotalMin / 60) % 24;
+    const newEndM = endTotalMin % 60;
+    setEndTime(`${pad2(newEndH)}:${pad2(newEndM)}`);
+    setIsLast(false);
+    if (endTotalMin >= 24 * 60) {
+      // 終了時刻が翌日にまたがる場合: 終了日を1日進める
+      const d = new Date(`${startDate}T00:00:00`);
+      d.setDate(d.getDate() + 1);
+      setEndDate(d.toISOString().slice(0, 10));
+    } else {
+      setEndDate(startDate);
+    }
+  };
+
   const showSuggestions = suggestions.length > 0 && title.trim().length > 0;
 
   return (
@@ -402,7 +421,7 @@ export default function EventCreateForm({ dateStr, mode = 'create', initialEvent
       {timePickerFor === 'start' && (
         <TimePickerSheet
           value={startTime}
-          onSelect={(t) => setStartTime(t)}
+          onSelect={handleStartTimeSelect}
           onClose={() => setTimePickerFor(null)}
         />
       )}
