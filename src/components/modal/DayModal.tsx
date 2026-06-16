@@ -48,14 +48,9 @@ export default function DayModal({
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
   const [eventToEdit, setEventToEdit] = useState<Event | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-
-  const [currentRole, setCurrentRole] = useState<FamilyRole | null>(readCurrentRole);
+  const currentRole = readCurrentRole();
 
   const isRefreshBlocked = mode === 'create' || mode === 'edit' || eventToDelete !== null;
-
-  useEffect(() => {
-    setCurrentRole(readCurrentRole());
-  }, []);
 
   useEffect(() => {
     onRefreshBlockChange(isRefreshBlocked);
@@ -81,7 +76,7 @@ export default function DayModal({
       dayEvents
         .filter((e) => !e.all_day && (e.start_date === e.end_date || e.start_date === dateStr))
         .sort((a, b) => a.start_time.localeCompare(b.start_time)),
-    [dayEvents],
+    [dayEvents, dateStr],
   );
 
   // 新規作成保存後

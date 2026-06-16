@@ -80,7 +80,7 @@ export default function EventCreateForm({
     ? addOneHour(initStartTime)
     : initialEvent.end_time;
 
-  const [currentRole, setCurrentRole] = useState<FamilyRole | null>(readCurrentRole);
+  const currentRole = readCurrentRole();
   const [quietHours, setQuietHours] = useState<QuietHoursSettings>(DEFAULT_QUIET_HOURS);
   const [title, setTitle] = useState(initialEvent?.title ?? '');
   const [startDate, setStartDate] = useState(initialEvent?.start_date ?? dateStr);
@@ -101,20 +101,12 @@ export default function EventCreateForm({
 
   // 母または自分 + かっぱタイトルの場合のみ「ラスト」選択肢を表示
   const showLastOption = canUseKappaLast(currentRole) && isKappaTitle(title);
-
-  // タイトルが「かっぱ」「カッパ」から外れたらラスト選択を解除
-  useEffect(() => {
-    if (!showLastOption) setIsLast(false);
-  }, [showLastOption]);
-
-  useEffect(() => {
-    setCurrentRole(readCurrentRole());
-  }, []);
+  const effectiveIsLast = showLastOption && isLast;
 
   useEffect(() => {
     if (suppressSuggestions) return;
     const query = title.trim();
-    if (!query) { setSuggestions([]); return; }
+    if (!query) return;
     const timer = setTimeout(async () => {
       try {
         const params = new URLSearchParams({ title: query });
@@ -171,8 +163,8 @@ export default function EventCreateForm({
       errs.push('開始時間を入力してください');
     if (!allDay && startDate === endDate) {
       const [startH, startM] = startTime.split(':').map(Number);
-      const effEndH = isLast ? 23 : parseInt(endTime.split(':')[0]);
-      const effEndM = isLast ? 59 : parseInt(endTime.split(':')[1]);
+      const effEndH = effectiveIsLast ? 23 : parseInt(endTime.split(':')[0]);
+      const effEndM = effectiveIsLast ? 59 : parseInt(endTime.split(':')[1]);
       if (effEndH * 60 + effEndM <= startH * 60 + startM)
         errs.push('終了時間は開始時間より後を指定してください');
     }
@@ -191,7 +183,7 @@ export default function EventCreateForm({
         end_date: endDate,
         all_day: allDay,
         start_time: allDay ? '' : startTime,
-        end_time: allDay ? '' : isLast ? KAPPA_LAST_END_TIME : endTime,
+        end_time: allDay ? '' : effectiveIsLast ? KAPPA_LAST_END_TIME : endTime,
         location,
         memo,
       };
@@ -296,6 +288,7 @@ export default function EventCreateForm({
             type="text"
             value={title}
             onChange={(e) => {
+              if (!e.target.value.trim()) setSuggestions([]);
               setSuppressSuggestions(false);
               setTitle(e.target.value);
             }}
@@ -405,14 +398,14 @@ export default function EventCreateForm({
           <div className="flex items-center">
             <span className="text-sm text-zinc-500 shrink-0">終了</span>
             <div className="ml-auto flex items-center gap-2">
-              {showLastOption && !allDay && !isLast && (
+              {showLastOption && !allDay && !effectiveIsLast && (
                 <LastToggleChip
                   onClick={() => setIsLast(true)}
                 />
               )}
               <DateButton value={endDate} min={startDate} onChange={setEndDate} label="終了日" />
               {!allDay && (
-                isLast ? (
+                effectiveIsLast ? (
                   <TimeButton
                     value="ラスト"
                     isLast
@@ -478,7 +471,7 @@ export default function EventCreateForm({
       {timePickerFor === 'end' && (
         <TimePickerSheet
           value={endTime}
-          isCurrentLast={isLast}
+          isCurrentLast={effectiveIsLast}
           showLastOption={showLastOption}
           onSelect={(t) => { setEndTime(t); setIsLast(false); }}
           onSelectLast={() => setIsLast(true)}

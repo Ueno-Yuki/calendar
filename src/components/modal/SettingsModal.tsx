@@ -102,18 +102,14 @@ interface Props {
 }
 
 export default function SettingsModal({ onClose }: Props) {
-  const [role, setRole] = useState<FamilyRole | null>(null);
+  const role = readCurrentRole();
   const [settings, setSettings] = useState<NotificationSettings>(DEFAULT_SETTINGS);
-  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() => getNotificationPermission());
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [justGranted, setJustGranted] = useState(false);
 
   useEffect(() => {
-    const r = readCurrentRole();
-    setRole(r);
-    setPermission(getNotificationPermission());
-
-    if (!r) return;
+    if (!role) return;
     apiFetch('/api/settings/notifications')
       .then((res) => (res.ok ? (res.json() as Promise<NotificationSettings>) : null))
       .then((data) => {
@@ -121,7 +117,7 @@ export default function SettingsModal({ onClose }: Props) {
       })
       .catch(() => {});
 
-  }, []);
+  }, [role]);
 
   const saveSettings = (next: NotificationSettings) => {
     setSettings(next);
