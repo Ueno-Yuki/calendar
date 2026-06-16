@@ -91,6 +91,7 @@ cp .env.local.example .env.local
 | `GOOGLE_OAUTH_CLIENT_ID` | OAuth2 クライアント ID（母の Google Calendar 連携用） |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | OAuth2 クライアントシークレット |
 | `GOOGLE_CALENDAR_ID_MOTHER` | 母の Google カレンダー ID（通常は Gmail アドレス） |
+| `GOOGLE_SYNC_COLOR_IDS_MOTHER` | 母Googleカレンダーから同期する Event.colorId（例: `7,9,10`、空なら全件同期） |
 | `VAPID_PUBLIC_KEY` | Web Push 用 VAPID 公開鍵 |
 | `VAPID_PRIVATE_KEY` | Web Push 用 VAPID 秘密鍵 |
 | `FAMILY_TOKEN_MOTHER` | 母の認証トークン（長いランダム文字列） |

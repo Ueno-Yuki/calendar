@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { getCurrentUser, AuthError } from '@/lib/auth';
 import { getSyncMeta } from '@/lib/syncMetaDb';
-import { syncGoogleToApp } from '@/lib/googleCalendarSync';
+import { debugGoogleSync, syncGoogleToApp } from '@/lib/googleCalendarSync';
 
 const LAST_SYNCED_KEY = 'mother_google_calendar_last_synced_at';
 const SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10分
@@ -27,6 +27,11 @@ export async function POST(request: NextRequest) {
 
   if (process.env.DISABLE_GOOGLE_SYNC === 'true') {
     return Response.json({ synced: false, reason: 'sync_disabled' });
+  }
+
+  if (request.nextUrl.searchParams.get('debug') === 'true') {
+    const result = await debugGoogleSync();
+    return Response.json(result);
   }
 
   const force = request.nextUrl.searchParams.get('force') === 'true';

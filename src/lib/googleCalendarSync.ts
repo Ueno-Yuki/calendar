@@ -17,6 +17,7 @@ const IMPORT_COMPLETED_KEY = 'mother_google_import_completed';
 const SYNC_LOCK_KEY = 'mother_google_sync_lock';
 const LOCK_TTL_MS = 5 * 60 * 1000; // 5分
 const CALENDAR_ID = () => process.env.GOOGLE_CALENDAR_ID_MOTHER ?? 'primary';
+const SYNC_COLOR_IDS = () => process.env.GOOGLE_SYNC_COLOR_IDS_MOTHER ?? '';
 
 // DISABLE_GOOGLE_SYNC=true で全同期処理を停止できる（重複発生時の緊急停止用）
 function isSyncDisabled(): boolean {
@@ -32,9 +33,59 @@ export interface SyncResult {
   reason?: string;
 }
 
+export interface GoogleSyncDebugResult {
+  debug: true;
+  calendarId: string;
+  timeMin: string;
+  timeMax: string;
+  totalFetched: number;
+  fetched: number;
+  includedByColor: number;
+  excludedByColor: number;
+  wouldAdd: number;
+  wouldUpdate: number;
+  wouldDelete: number;
+  colorIdCounts: Record<string, number>;
+  skippedReasonCounts: Record<string, number>;
+  sampleEvents: Array<{
+    summary: string;
+    start: string;
+    colorId: string;
+    includedByColor: boolean;
+  }>;
+  syncedAt: string;
+}
+
 // ---- 型エイリアス ----
 
 type ExistingEntry = { event: Event; sheetName: string; dataRowIndex: number };
+
+function getSyncColorIdSet(): Set<string> | null {
+  const ids = SYNC_COLOR_IDS()
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  return ids.length > 0 ? new Set(ids) : null;
+}
+
+// Google Calendar API の Event.colorId を同期対象判定に使う。
+// カレンダー自体の色ではなく、イベント個別の色。色未設定イベントは default として扱う。
+function getEventColorId(item: calendar_v3.Schema$Event): string {
+  return item.colorId ?? 'default';
+}
+
+function isIncludedByColor(item: calendar_v3.Schema$Event, colorIds: Set<string> | null): boolean {
+  if (!colorIds) return true;
+  return colorIds.has(getEventColorId(item));
+}
+
+function incrementCount(counts: Record<string, number>, key: string): void {
+  counts[key] = (counts[key] ?? 0) + 1;
+}
+
+function getEventStartForDebug(item: calendar_v3.Schema$Event): string {
+  return item.start?.dateTime ?? item.start?.date ?? '';
+}
 
 // ---- 簡易同期ロック ----
 // sync_meta の mother_google_sync_lock に ISO 日時を保存する。
@@ -188,12 +239,14 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
     const syncedAt = new Date().toISOString();
     // processedIds: 同一同期内で同じ item.id を二重処理しない
     const processedIds = new Set<string>();
+    const syncColorIds = getSyncColorIdSet();
     let added = 0;
 
     for (const item of items) {
       if (!item.id) continue;
       if (processedIds.has(item.id)) continue;
       processedIds.add(item.id);
+      if (!isIncludedByColor(item, syncColorIds)) continue;
 
       if (existingMap.has(item.id)) continue; // 同期開始時点で既存 → スキップ
 
@@ -284,6 +337,7 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
     const syncedAt = new Date().toISOString();
     // processedIds: 同一同期内で同じ item.id を二重処理しない
     const processedIds = new Set<string>();
+    const syncColorIds = getSyncColorIdSet();
     let added = 0;
     let updated = 0;
     let deleted = 0;
@@ -292,6 +346,7 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
       if (!item.id) continue;
       if (processedIds.has(item.id)) continue;
       processedIds.add(item.id);
+      if (!isIncludedByColor(item, syncColorIds)) continue;
 
       const existing = existingMap.get(item.id);
 
@@ -388,6 +443,135 @@ export async function syncGoogleToApp(): Promise<SyncResult> {
   } finally {
     await releaseSyncLock();
   }
+}
+
+// ---- Google同期デバッグ ----
+// POST /api/sync/google?debug=true から呼ばれる読み取り専用のドライラン。
+// Sheets への追加・更新・削除、sync_meta 更新、ロック取得は行わない。
+
+export async function debugGoogleSync(): Promise<GoogleSyncDebugResult | SyncResult> {
+  if (isSyncDisabled()) {
+    return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'sync_disabled' };
+  }
+
+  const calendar = await getAuthorizedCalendar();
+  if (!calendar) {
+    return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'not_connected' };
+  }
+
+  const { timeMin, timeMax } = jstYearRange(jstCurrentYear());
+  const items = await listGCalItems(calendar, {
+    calendarId: CALENDAR_ID(),
+    timeMin,
+    timeMax,
+    singleEvents: true,
+    maxResults: 2500,
+    showDeleted: true,
+  });
+
+  const existingMap = await buildGoogleEventIdMap();
+  const syncColorIds = getSyncColorIdSet();
+  const colorIdCounts: Record<string, number> = {};
+  const skippedReasonCounts: Record<string, number> = {};
+  const sampleEvents: GoogleSyncDebugResult['sampleEvents'] = [];
+  const processedIds = new Set<string>();
+  let includedByColor = 0;
+  let excludedByColor = 0;
+  let wouldAdd = 0;
+  let wouldUpdate = 0;
+  let wouldDelete = 0;
+
+  for (const item of items) {
+    const colorId = getEventColorId(item);
+    const included = isIncludedByColor(item, syncColorIds);
+    incrementCount(colorIdCounts, colorId);
+
+    if (sampleEvents.length < 20) {
+      sampleEvents.push({
+        summary: item.summary ?? '(タイトルなし)',
+        start: getEventStartForDebug(item),
+        colorId,
+        includedByColor: included,
+      });
+    }
+
+    if (!item.id) {
+      incrementCount(skippedReasonCounts, 'missing_id');
+      continue;
+    }
+    if (processedIds.has(item.id)) {
+      incrementCount(skippedReasonCounts, 'duplicate_in_response');
+      continue;
+    }
+    processedIds.add(item.id);
+
+    if (!included) {
+      excludedByColor++;
+      incrementCount(skippedReasonCounts, 'excluded_by_color');
+      continue;
+    }
+    includedByColor++;
+
+    const existing = existingMap.get(item.id);
+    if (item.status === 'cancelled') {
+      if (existing && !existing.event.deleted) {
+        wouldDelete++;
+      } else {
+        incrementCount(skippedReasonCounts, 'cancelled_no_existing');
+      }
+      continue;
+    }
+
+    const parsed = parseGCalEvent(item);
+    if (!parsed) {
+      incrementCount(skippedReasonCounts, 'parse_failed');
+      continue;
+    }
+
+    if (!existing) {
+      wouldAdd++;
+      continue;
+    }
+    if (existing.event.deleted) {
+      incrementCount(skippedReasonCounts, 'existing_deleted_in_app');
+      continue;
+    }
+
+    const e = existing.event;
+    const changed =
+      e.title !== parsed.title ||
+      e.start_date !== parsed.start_date ||
+      e.end_date !== parsed.end_date ||
+      e.start_time !== parsed.start_time ||
+      e.end_time !== parsed.end_time ||
+      e.all_day !== parsed.all_day ||
+      e.location !== parsed.location ||
+      e.memo !== parsed.memo;
+
+    if (changed) {
+      wouldUpdate++;
+    } else {
+      incrementCount(skippedReasonCounts, 'already_synced_no_change');
+    }
+  }
+
+  return {
+    debug: true,
+    calendarId: CALENDAR_ID(),
+    timeMin,
+    timeMax,
+    totalFetched: items.length,
+    fetched: items.length,
+    includedByColor,
+    excludedByColor,
+    wouldAdd,
+    wouldUpdate,
+    wouldDelete,
+    colorIdCounts,
+    skippedReasonCounts,
+    sampleEvents,
+    syncedAt: new Date().toISOString(),
+  };
 }
 
 // ---- 重複クリーンアップ ----
