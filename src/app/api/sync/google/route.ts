@@ -19,6 +19,10 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'サーバーエラー' }, { status: 500 });
   }
 
+  if (process.env.DISABLE_GOOGLE_SYNC === 'true') {
+    return Response.json({ synced: false, reason: 'sync_disabled' });
+  }
+
   const force = request.nextUrl.searchParams.get('force') === 'true';
 
   if (!force) {

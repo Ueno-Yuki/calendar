@@ -134,3 +134,16 @@ export async function ensureSheet(
 export async function ensureMonthSheet(year: number, month: number): Promise<void> {
   await ensureSheet(getMonthSheetName(year, month), EVENT_HEADERS);
 }
+
+/**
+ * スプレッドシート内の全 YYYY-MM 形式シート名を返す。
+ * Google同期の既存マップ構築で全期間を網羅するために使用する。
+ */
+export async function getAllMonthSheetNames(): Promise<string[]> {
+  const spreadsheetId = getSpreadsheetId();
+  const sheets = getSheetsClient();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  return (meta.data.sheets ?? [])
+    .map((s) => s.properties?.title ?? '')
+    .filter((name) => /^\d{4}-\d{2}$/.test(name));
+}
