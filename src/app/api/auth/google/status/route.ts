@@ -2,9 +2,13 @@ import type { NextRequest } from 'next/server';
 import { getCurrentUser, AuthError } from '@/lib/auth';
 import { getSyncMeta } from '@/lib/syncMetaDb';
 
+function canUseMotherGoogleSync(role: ReturnType<typeof getCurrentUser>['role']): boolean {
+  return role === 'mother' || role === 'me';
+}
+
 // GET /api/auth/google/status
-// mother の Google カレンダー連携状態を返す。
-// mother 以外のロールは connected: false を返す（403 は返さない）。
+// 母の Google カレンダー連携状態を返す。
+// 同期操作を許可しないロールは connected: false を返す（403 は返さない）。
 export async function GET(request: NextRequest) {
   let currentUser: ReturnType<typeof getCurrentUser>;
   try {
@@ -16,7 +20,7 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: 'サーバーエラー' }, { status: 500 });
   }
 
-  if (currentUser.role !== 'mother') {
+  if (!canUseMotherGoogleSync(currentUser.role)) {
     return Response.json({
       connected: false,
       lastSyncedAt: null,

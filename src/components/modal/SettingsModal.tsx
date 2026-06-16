@@ -91,6 +91,10 @@ function readCurrentRole(): FamilyRole | null {
   }
 }
 
+function canUseGoogleSync(role: FamilyRole | null): boolean {
+  return role === 'mother' || role === 'me';
+}
+
 function Toggle({
   checked,
   onChange,
@@ -149,7 +153,7 @@ export default function SettingsModal({ onClose, onGoogleSynced }: Props) {
       })
       .catch(() => {});
 
-    if (r === 'mother') {
+    if (canUseGoogleSync(r)) {
       apiFetch('/api/auth/google/status')
         .then((res) => (res.ok ? (res.json() as Promise<GoogleStatus>) : null))
         .then((data) => {
@@ -383,7 +387,7 @@ export default function SettingsModal({ onClose, onGoogleSynced }: Props) {
 
           <div className="h-px bg-zinc-100 mx-4" />
 
-          {role === 'mother' && (
+          {canUseGoogleSync(role) && (
             <>
               {/* Googleカレンダー同期 */}
               <section className="px-4 pt-5 pb-4">

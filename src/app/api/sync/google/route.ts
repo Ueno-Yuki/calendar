@@ -6,6 +6,10 @@ import { debugGoogleSync, syncGoogleToApp } from '@/lib/googleCalendarSync';
 const LAST_SYNCED_KEY = 'mother_google_calendar_last_synced_at';
 const SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10分
 
+function canUseMotherGoogleSync(role: ReturnType<typeof getCurrentUser>['role']): boolean {
+  return role === 'mother' || role === 'me';
+}
+
 // POST /api/sync/google
 // Google → アプリ の手動同期エンドポイント。
 // 取得範囲は syncGoogleToApp() 内で当年固定 (JST)。
@@ -21,7 +25,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'サーバーエラー' }, { status: 500 });
   }
 
-  if (currentUser.role !== 'mother') {
+  if (!canUseMotherGoogleSync(currentUser.role)) {
     return Response.json({ synced: false, reason: 'forbidden' }, { status: 403 });
   }
 
