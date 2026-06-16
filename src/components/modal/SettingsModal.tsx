@@ -376,6 +376,7 @@ export default function SettingsModal({ onClose }: Props) {
                   お休みモード
                 </p>
                 <p className="text-xs text-zinc-400 mt-1">通知を止める時間を設定します</p>
+                <p className="text-xs text-zinc-400 mt-1">この設定をしても「今日の予定通知」は通知されます</p>
               </div>
               <Toggle
                 checked={settings.quiet_hours_enabled}

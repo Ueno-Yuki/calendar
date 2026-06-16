@@ -71,6 +71,11 @@ export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
               }}
             />
           )}
+          <div className="absolute inset-0 grid grid-cols-7 divide-x divide-zinc-100 pointer-events-none">
+            {days.map((day) => (
+              <div key={day.dateStr} />
+            ))}
+          </div>
           {multiDayBars.map((bar, i) => {
             const leftPct = `${(bar.startCol / 7) * 100}%`;
             const widthPct = `${((bar.endCol - bar.startCol + 1) / 7) * 100}%`;
