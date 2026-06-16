@@ -30,6 +30,7 @@ export interface SyncResult {
   updated: number;
   deleted: number;
   syncedAt: string;
+  skippedAlreadyImported?: number;
   reason?: string;
 }
 
@@ -40,12 +41,16 @@ export interface GoogleSyncPreviewResult {
   totalFetched: number;
   validEvents: number;
   cancelled: number;
+  alreadyImported: number;
+  selectable: number;
   categories: Array<{
     categoryId: string;
     label: string;
     icon: string;
     colorIds: string[];
     count: number;
+    alreadyImported: number;
+    selectableCount: number;
     events: Array<{
       googleEventId: string;
       title: string;
@@ -113,6 +118,14 @@ function getGoogleCategory(colorId: string): GoogleCategoryDefinition {
     icon: '',
     colorIds: [colorId],
   };
+}
+
+function normalizeImportTitle(title: string): string {
+  return title.trim().replace(/[ \u3000]+/g, ' ');
+}
+
+function buildImportKey(startDate: string, title: string): string {
+  return `${startDate}::${normalizeImportTitle(title)}`;
 }
 
 function normalizeColorIds(colorIds: string[] | undefined): string[] {
@@ -263,6 +276,24 @@ async function buildGoogleEventIdMap(): Promise<Map<string, ExistingEntry>> {
   return map;
 }
 
+async function buildExistingImportKeySet(): Promise<Set<string>> {
+  const set = new Set<string>();
+  const monthSheetNames = await getAllMonthSheetNames();
+
+  for (const sheetName of monthSheetNames) {
+    const rows = await getRows(sheetName);
+    rows.forEach((row) => {
+      if (row.deleted === 'TRUE') return;
+      const startDate = row.start_date ?? '';
+      const title = row.title ?? '';
+      if (!startDate || !title) return;
+      set.add(buildImportKey(startDate, title));
+    });
+  }
+
+  return set;
+}
+
 // ---- append 直前再チェック ----
 // 対象シートを再読して google_event_id の存在を確認する。
 // 並行リクエストが先に append した場合をここで検知できる。
@@ -319,7 +350,7 @@ function currentJstToYearEndRange(): { timeMin: string; timeMax: string } {
 // OAuth認証完了直後に一度だけ実行する。
 // mother_google_import_completed = TRUE の場合はスキップ。
 // DISABLE_GOOGLE_SYNC=true の場合は何もしない。
-// 取得範囲: Asia/Tokyo基準の当年のみ（繰り返し予定の将来年大量登録を防ぐ）
+// 取得範囲: Asia/Tokyo基準の現在日時から当年末まで（過去予定と将来年大量登録を防ぐ）
 
 export async function importGoogleCalendar(): Promise<SyncResult> {
   if (isSyncDisabled()) {
@@ -421,7 +452,7 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
 
 // ---- 通常同期 Google → アプリ ----
 // POST /api/sync/google から呼ばれる。
-// 取得範囲: Asia/Tokyo基準の当年のみ（繰り返し予定の将来年大量登録を防ぐ）
+// 取得範囲: Asia/Tokyo基準の現在日時から当年末まで（過去予定と将来年大量登録を防ぐ）
 // DISABLE_GOOGLE_SYNC=true の場合は何もしない。
 // Google同期由来の追加・更新・削除は即時Push通知と notification_logs の対象外。
 // 差分があった場合のみ events_last_updated_at を更新し、他端末の更新バッジに反映する。
@@ -460,12 +491,14 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
     });
 
     const existingMap = await buildGoogleEventIdMap();
+    const existingImportKeys = await buildExistingImportKeySet();
     const syncedAt = new Date().toISOString();
     // processedIds: 同一同期内で同じ item.id を二重処理しない
     const processedIds = new Set<string>();
     let added = 0;
     let updated = 0;
     let deleted = 0;
+    let skippedAlreadyImported = 0;
 
     for (const item of items) {
       if (!item.id) continue;
@@ -495,6 +528,11 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
       const googleColorId = getEventColorId(item);
 
       if (!existing) {
+        const importKey = buildImportKey(parsed.start_date, parsed.title);
+        if (existingImportKeys.has(importKey)) {
+          skippedAlreadyImported++;
+          continue;
+        }
         // 新規: 全月シートに存在しない場合のみ append
         const [yearStr, monthStr] = parsed.start_date.split('-');
         const evYear = parseInt(yearStr);
@@ -532,6 +570,7 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
         await appendRow(targetSheet, eventToValues(newEvent));
         // append後 existingMap を即時更新 → 同一同期内で再 append しない
         existingMap.set(item.id, { event: newEvent, sheetName: targetSheet, dataRowIndex: rowCount });
+        existingImportKeys.add(importKey);
         added++;
       } else if (!existing.event.deleted) {
         // 変更チェック
@@ -573,7 +612,7 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
       await setSyncMeta('events_last_updated_at', new Date().toISOString());
     }
     await setSyncMeta(LAST_SYNCED_KEY, syncedAt);
-    return { synced: true, added, updated, deleted, syncedAt };
+    return { synced: true, added, updated, deleted, syncedAt, skippedAlreadyImported };
   } finally {
     await releaseSyncLock();
   }
@@ -602,10 +641,12 @@ export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | Syn
     showDeleted: true,
   });
 
+  const existingImportKeys = await buildExistingImportKeySet();
   type CategoryGroup = GoogleSyncPreviewResult['categories'][number];
   const groups = new Map<string, CategoryGroup>();
   let validEvents = 0;
   let cancelled = 0;
+  let alreadyImported = 0;
 
   for (const item of items) {
     if (item.status === 'cancelled') {
@@ -624,9 +665,19 @@ export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | Syn
       icon: category.icon,
       colorIds: category.colorIds,
       count: 0,
+      alreadyImported: 0,
+      selectableCount: 0,
       events: [],
     };
     group.count++;
+    const importKey = buildImportKey(parsed.start_date, parsed.title);
+    if (existingImportKeys.has(importKey)) {
+      alreadyImported++;
+      group.alreadyImported++;
+      groups.set(category.categoryId, group);
+      continue;
+    }
+    group.selectableCount++;
     group.events.push({
       googleEventId: item.id,
       title: parsed.title,
@@ -647,6 +698,8 @@ export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | Syn
     totalFetched: items.length,
     validEvents,
     cancelled,
+    alreadyImported,
+    selectable: validEvents - alreadyImported,
     categories: [...groups.values()].sort((a, b) => {
       const aIndex = GOOGLE_CATEGORY_DEFINITIONS.findIndex((category) => category.categoryId === a.categoryId);
       const bIndex = GOOGLE_CATEGORY_DEFINITIONS.findIndex((category) => category.categoryId === b.categoryId);

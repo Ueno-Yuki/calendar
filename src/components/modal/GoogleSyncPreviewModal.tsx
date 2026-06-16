@@ -20,6 +20,8 @@ export interface GoogleSyncCategory {
   icon: string;
   colorIds: string[];
   count: number;
+  alreadyImported: number;
+  selectableCount: number;
   events: GoogleSyncPreviewEvent[];
 }
 
@@ -30,6 +32,8 @@ export interface GoogleSyncPreview {
   totalFetched: number;
   validEvents: number;
   cancelled: number;
+  alreadyImported: number;
+  selectable: number;
   categories: GoogleSyncCategory[];
 }
 
@@ -169,7 +173,7 @@ export default function GoogleSyncPreviewModal({
           <div className="mt-4 grid grid-cols-3 gap-2 text-center">
             <div className="rounded-lg bg-zinc-50 px-2 py-2">
               <p className="text-[11px] text-zinc-400">取得予定</p>
-              <p className="text-sm font-semibold text-zinc-800">{preview.validEvents}件</p>
+              <p className="text-sm font-semibold text-zinc-800">{preview.selectable}件</p>
             </div>
             <div className="rounded-lg bg-zinc-50 px-2 py-2">
               <p className="text-[11px] text-zinc-400">選択中</p>
@@ -180,6 +184,12 @@ export default function GoogleSyncPreviewModal({
               <p className="text-sm font-semibold text-zinc-800">{preview.cancelled}件</p>
             </div>
           </div>
+
+          {preview.alreadyImported > 0 && (
+            <p className="mt-3 rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
+              取り込み済みの予定 {preview.alreadyImported}件を除外しました
+            </p>
+          )}
 
           <div className="mt-4 divide-y divide-zinc-100 rounded-xl border border-zinc-100">
             {preview.categories.length === 0 ? (
@@ -211,8 +221,13 @@ export default function GoogleSyncPreviewModal({
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-medium text-zinc-800">
                           {category.icon && <span className="mr-1">{category.icon}</span>}
-                          {category.label} {category.count}件
+                          {category.label} {category.selectableCount}件
                         </span>
+                        {category.alreadyImported > 0 && (
+                          <span className="mt-1 block text-xs text-zinc-400">
+                            取り込み済み {category.alreadyImported}件を除外
+                          </span>
+                        )}
                         {samples.length > 0 && !expanded && (
                           <span className="mt-1 block truncate text-xs text-zinc-400">
                             例: {samples.join('、')}
