@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { X, Plus, Trash2, Pencil, MapPin } from 'lucide-react';
 import { formatEventTimeRange } from '@/lib/kappaShift';
 import type { Event, FamilyRole } from '@/types';
@@ -20,6 +20,8 @@ interface Props {
   onClose: () => void;
   onEventCreated: () => void;
   onEventDeleted: () => void;
+  hasPendingRefresh: boolean;
+  onRefreshBlockChange: (blocked: boolean) => void;
 }
 
 function readCurrentRole(): FamilyRole | null {
@@ -39,6 +41,8 @@ export default function DayModal({
   onClose,
   onEventCreated,
   onEventDeleted,
+  hasPendingRefresh,
+  onRefreshBlockChange,
 }: Props) {
   const [mode, setMode] = useState<'schedule' | 'create' | 'edit'>('schedule');
   const [swipedEventId, setSwipedEventId] = useState<string | null>(null);
@@ -48,6 +52,13 @@ export default function DayModal({
   const [isDeleting, setIsDeleting] = useState(false);
 
   const [currentRole] = useState<FamilyRole | null>(readCurrentRole);
+
+  const isRefreshBlocked = mode === 'create' || mode === 'edit' || eventToDelete !== null;
+
+  useEffect(() => {
+    onRefreshBlockChange(isRefreshBlocked);
+    return () => onRefreshBlockChange(false);
+  }, [isRefreshBlocked, onRefreshBlockChange]);
 
   const date = new Date(`${dateStr}T00:00:00`);
   const dow = date.getDay();
@@ -154,6 +165,7 @@ export default function DayModal({
         {mode === 'create' ? (
           <EventCreateForm
             dateStr={dateStr}
+            hasPendingRefresh={hasPendingRefresh}
             onSaved={handleSaved}
             onCancel={() => setMode('schedule')}
           />
@@ -162,6 +174,7 @@ export default function DayModal({
             dateStr={eventToEdit.start_date}
             mode="edit"
             initialEvent={eventToEdit}
+            hasPendingRefresh={hasPendingRefresh}
             onSaved={handleEditSaved}
             onCancel={handleEditCancel}
           />
@@ -252,6 +265,7 @@ export default function DayModal({
           onCancel={handleDeleteCancel}
           onConfirm={handleDeleteConfirm}
           isDeleting={isDeleting}
+          hasPendingRefresh={hasPendingRefresh}
         />
       )}
     </>

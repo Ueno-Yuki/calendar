@@ -191,7 +191,7 @@ export async function POST(request: NextRequest) {
     await ensureMonthSheet(startYear, startMonth);
     await appendRow(getMonthSheetName(startYear, startMonth), eventToValues(event));
 
-    setSyncMeta('events_last_updated_at', now).catch(() => {});
+    setSyncMeta('events_last_updated_at', new Date().toISOString()).catch(() => {});
 
     upsertTemplate({
       person: event.person,

@@ -39,16 +39,16 @@ export default function CalendarPage() {
 
   // ポーリング・保留更新UX状態
   const [hasPendingRefresh, setHasPendingRefresh] = useState(false);
-  const [showUpdateBanner, setShowUpdateBanner] = useState(false);
 
   // refでクロージャ内から最新状態を参照する
-  const selectedDateRef = useRef<string | null>(null);
+  const isRefreshBlockedRef = useRef(false);
+  const hasPendingRefreshRef = useRef(false);
   // undefined = 未初期化, null = サーバー未設定, string = ISO日時
   const knownLastUpdatedAtRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
-    selectedDateRef.current = selectedDate;
-  }, [selectedDate]);
+    hasPendingRefreshRef.current = hasPendingRefresh;
+  }, [hasPendingRefresh]);
 
   // 通知タップ時の date パラメータを読み取り、対象月へ移動してDayModalを予約する
   useEffect(() => {
@@ -116,6 +116,21 @@ export default function CalendarPage() {
       // ignore
     }
   }, []);
+
+  const reloadEvents = useCallback(() => {
+    setRefreshKey((k) => k + 1);
+  }, []);
+
+  const clearPendingRefresh = useCallback(() => {
+    hasPendingRefreshRef.current = false;
+    setHasPendingRefresh(false);
+  }, []);
+
+  const applyPendingRefreshIfNeeded = useCallback(() => {
+    if (!hasPendingRefreshRef.current) return;
+    reloadEvents();
+    clearPendingRefresh();
+  }, [clearPendingRefresh, reloadEvents]);
 
 
   useEffect(() => {
@@ -193,13 +208,13 @@ export default function CalendarPage() {
         if (!isNewer) return;
         knownLastUpdatedAtRef.current = lastUpdatedAt;
 
-        if (selectedDateRef.current) {
-          // DayModal 表示中 → 保留
+        if (isRefreshBlockedRef.current) {
+          // 登録・編集・削除確認中 → 入力内容を守るため保留
+          hasPendingRefreshRef.current = true;
           setHasPendingRefresh(true);
-          setShowUpdateBanner(true);
         } else {
-          // 通常時 → 即リロード（バナーなし）
-          setRefreshKey((k) => k + 1);
+          // 通常時・予定一覧表示中 → DayModalを閉じずに予定だけ差し替える
+          reloadEvents();
         }
       } catch {
         // ネットワークエラー等は無視
@@ -220,7 +235,7 @@ export default function CalendarPage() {
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [authError, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authError, loading, reloadEvents]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const goPrevMonth = () =>
     setYearMonth(({ year: y, month: m }) =>
@@ -235,28 +250,28 @@ export default function CalendarPage() {
   // DayModal を閉じる時: hasPendingRefresh があればリロード
   const handleDayModalClose = () => {
     setSelectedDate(null);
-    if (hasPendingRefresh) {
-      setRefreshKey((k) => k + 1);
-      setHasPendingRefresh(false);
-      setShowUpdateBanner(false);
-    }
+    isRefreshBlockedRef.current = false;
+    applyPendingRefreshIfNeeded();
   };
 
   // 予定保存・削除後: リロード & 保留状態リセット
   // refreshKnownLastUpdated で自分の操作を knownLastUpdatedAt に反映し、次のポーリングで二重リロードしない
   const handleEventCreated = () => {
-    setRefreshKey((k) => k + 1);
-    setHasPendingRefresh(false);
-    setShowUpdateBanner(false);
+    reloadEvents();
+    clearPendingRefresh();
     refreshKnownLastUpdated();
   };
 
   const handleEventDeleted = () => {
-    setRefreshKey((k) => k + 1);
-    setHasPendingRefresh(false);
-    setShowUpdateBanner(false);
+    reloadEvents();
+    clearPendingRefresh();
     refreshKnownLastUpdated();
   };
+
+  const handleRefreshBlockChange = useCallback((blocked: boolean) => {
+    isRefreshBlockedRef.current = blocked;
+    if (!blocked) applyPendingRefreshIfNeeded();
+  }, [applyPendingRefreshIfNeeded]);
 
   if (authError) {
     return (
@@ -278,13 +293,6 @@ export default function CalendarPage() {
         onYearMonthPress={() => setShowYearMonthPicker(true)}
       />
 
-      {/* 他の家族の更新を保留中のバナー */}
-      {showUpdateBanner && (
-        <div className="px-4 py-1.5 bg-blue-50 text-xs text-blue-600 text-center shrink-0">
-          他の家族が予定を更新しました。閉じると反映されます。
-        </div>
-      )}
-
       <CalendarGrid
         year={year}
         month={month}
@@ -301,6 +309,8 @@ export default function CalendarPage() {
           onClose={handleDayModalClose}
           onEventCreated={handleEventCreated}
           onEventDeleted={handleEventDeleted}
+          hasPendingRefresh={hasPendingRefresh}
+          onRefreshBlockChange={handleRefreshBlockChange}
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}

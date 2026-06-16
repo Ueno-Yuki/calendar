@@ -154,7 +154,7 @@ export async function PUT(
       await updateRow(found.sheetName, found.dataRowIndex, eventToValues(updated));
     }
 
-    setSyncMeta('events_last_updated_at', updated.updated_at).catch(() => {});
+    setSyncMeta('events_last_updated_at', new Date().toISOString()).catch(() => {});
 
     return Response.json(updated);
   } catch {
@@ -209,7 +209,7 @@ export async function DELETE(
 
     await updateRow(found.sheetName, found.dataRowIndex, eventToValues(deleted));
 
-    setSyncMeta('events_last_updated_at', deleted.updated_at).catch(() => {});
+    setSyncMeta('events_last_updated_at', new Date().toISOString()).catch(() => {});
 
     // 本人以外の家族へ即時Push通知（失敗しても削除成功扱い）
     sendInstantNotification('event_deleted', deleted, currentUser.role).catch(() => {});
