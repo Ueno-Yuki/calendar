@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Event } from '@/types';
+import type { Event, FamilyRole } from '@/types';
 import { apiFetch, ApiAuthError } from '@/lib/apiClient';
+import { STORAGE_KEY } from '@/lib/auth';
+import type { StoredUser } from '@/lib/auth';
 import CalendarHeader from '@/components/calendar/CalendarHeader';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import DayModal from '@/components/modal/DayModal';
@@ -14,6 +16,21 @@ import YearMonthPickerModal from '@/components/modal/YearMonthPickerModal';
 
 interface EventsResponse {
   events: Event[];
+}
+
+function canUseGoogleSync(role: FamilyRole | null): boolean {
+  return role === 'mother' || role === 'me';
+}
+
+function readCurrentRole(): FamilyRole | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return (JSON.parse(raw) as StoredUser).role;
+  } catch {
+    return null;
+  }
 }
 
 function getInitialYearMonth() {
@@ -35,6 +52,7 @@ export default function CalendarPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [showYearMonthPicker, setShowYearMonthPicker] = useState(false);
   const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
+  const [currentRole, setCurrentRole] = useState<FamilyRole | null>(null);
   const notificationPromptCheckedRef = useRef(false);
 
   // ポーリング・手動更新UX状態
@@ -42,6 +60,9 @@ export default function CalendarPage() {
   const [hasRemoteUpdates, setHasRemoteUpdates] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshBlocked, setIsRefreshBlocked] = useState(false);
+  const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
+  const [googleSyncMessage, setGoogleSyncMessage] = useState('');
+  const [googleSyncError, setGoogleSyncError] = useState('');
 
   // refでクロージャ内から最新状態を参照する
   const isRefreshBlockedRef = useRef(false);
@@ -53,8 +74,24 @@ export default function CalendarPage() {
   }, [knownLastUpdatedAt]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setCurrentRole(readCurrentRole());
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     isRefreshBlockedRef.current = isRefreshBlocked;
   }, [isRefreshBlocked]);
+
+  useEffect(() => {
+    if (!googleSyncMessage && !googleSyncError) return;
+    const timer = window.setTimeout(() => {
+      setGoogleSyncMessage('');
+      setGoogleSyncError('');
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [googleSyncError, googleSyncMessage]);
 
   // 通知タップ時の date パラメータを読み取り、対象月へ移動してDayModalを予約する
   useEffect(() => {
@@ -291,6 +328,45 @@ export default function CalendarPage() {
     refreshKnownLastUpdated();
   }, [refreshKnownLastUpdated, reloadEvents]);
 
+  const handleHeaderGoogleSync = useCallback(async () => {
+    if (!canUseGoogleSync(currentRole) || isGoogleSyncing) return;
+
+    setIsGoogleSyncing(true);
+    setGoogleSyncMessage('');
+    setGoogleSyncError('');
+    try {
+      const res = await apiFetch('/api/sync/google', { method: 'POST' });
+      const data = (await res.json().catch(() => null)) as { reason?: string } | null;
+
+      if (!res.ok) {
+        setGoogleSyncError(data?.reason === 'forbidden' ? '同期権限がありません' : 'Google同期に失敗しました');
+        return;
+      }
+
+      if (data?.reason === 'sync_disabled') {
+        setGoogleSyncError('Google同期は停止中です');
+        return;
+      }
+      if (data?.reason === 'not_connected') {
+        setGoogleSyncError('Googleカレンダーが未連携です');
+        return;
+      }
+      if (data?.reason === 'too_soon') {
+        setGoogleSyncMessage('直近で同期済みです');
+      } else {
+        setGoogleSyncMessage('Google同期しました');
+      }
+
+      await reloadEvents();
+      setHasRemoteUpdates(false);
+      refreshKnownLastUpdated();
+    } catch {
+      setGoogleSyncError('Google同期に失敗しました');
+    } finally {
+      setIsGoogleSyncing(false);
+    }
+  }, [currentRole, isGoogleSyncing, refreshKnownLastUpdated, reloadEvents]);
+
   if (authError) {
     return (
       <div className="flex min-h-screen items-center justify-center p-8">
@@ -310,10 +386,26 @@ export default function CalendarPage() {
         hasRemoteUpdates={hasRemoteUpdates}
         isRefreshing={isRefreshing}
         refreshDisabled={isRefreshBlocked}
+        showGoogleSync={canUseGoogleSync(currentRole)}
+        isGoogleSyncing={isGoogleSyncing}
+        onGoogleSync={handleHeaderGoogleSync}
         onRefresh={handleManualRefresh}
         onSettingsOpen={() => setShowSettings(true)}
         onYearMonthPress={() => setShowYearMonthPicker(true)}
       />
+      {(googleSyncMessage || googleSyncError) && (
+        <div className="pointer-events-none fixed left-1/2 top-14 z-30 -translate-x-1/2 px-4">
+          <p
+            className={`rounded-full px-3 py-1.5 text-xs font-medium shadow-sm ${
+              googleSyncError
+                ? 'bg-red-50 text-red-600 ring-1 ring-red-100'
+                : 'bg-zinc-900 text-white'
+            }`}
+          >
+            {googleSyncError || googleSyncMessage}
+          </p>
+        </div>
+      )}
 
       <CalendarGrid
         year={year}

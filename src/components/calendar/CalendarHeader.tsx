@@ -9,7 +9,11 @@ interface Props {
   hasRemoteUpdates?: boolean;
   isRefreshing?: boolean;
   refreshDisabled?: boolean;
+  showGoogleSync?: boolean;
+  isGoogleSyncing?: boolean;
+  googleSyncDisabled?: boolean;
   onRefresh?: () => void;
+  onGoogleSync?: () => void;
   onSettingsOpen?: () => void;
   onYearMonthPress?: () => void;
 }
@@ -21,7 +25,11 @@ export default function CalendarHeader({
   hasRemoteUpdates = false,
   isRefreshing = false,
   refreshDisabled = false,
+  showGoogleSync = false,
+  isGoogleSyncing = false,
+  googleSyncDisabled = false,
   onRefresh,
+  onGoogleSync,
   onSettingsOpen,
   onYearMonthPress,
 }: Props) {
@@ -53,6 +61,17 @@ export default function CalendarHeader({
             </span>
           )}
         </button>
+        {showGoogleSync && (
+          <button
+            type="button"
+            aria-label="Googleカレンダーを同期"
+            onClick={onGoogleSync}
+            disabled={googleSyncDisabled || isGoogleSyncing}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 text-sm font-semibold text-zinc-500 hover:border-zinc-300 hover:text-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span className={isGoogleSyncing ? 'animate-pulse' : ''}>G</span>
+          </button>
+        )}
         <button
           type="button"
           aria-label="設定"
