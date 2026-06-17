@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => null);
   const selection = parseGoogleReverseSelection(body);
-  if (selection.createIds.length === 0 && selection.updatePairs.length === 0) {
+  if (selection.createItems.length === 0 && selection.updateItems.length === 0) {
     return Response.json({ synced: false, reason: 'no_events_selected' }, { status: 400 });
   }
 

@@ -10,6 +10,7 @@ export interface GoogleReverseCreateCandidate {
   startTime: string;
   endTime: string;
   allDay: boolean;
+  suggestedColorId: string;
 }
 
 export interface GoogleReverseUpdateCandidate {
@@ -18,6 +19,7 @@ export interface GoogleReverseUpdateCandidate {
   startDate: string;
   appTitle: string;
   googleTitle: string;
+  suggestedColorId: string;
 }
 
 export interface GoogleReverseSkippedItem {
@@ -40,12 +42,40 @@ interface Props {
   preview: GoogleReverseSyncPreview;
   selectedCreateIds: string[];
   selectedUpdatePairKeys: string[];
+  selectedCreateColorIds: Record<string, string>;
+  selectedUpdateColorIds: Record<string, string>;
   syncing: boolean;
   error?: string;
   onToggleCreate: (sheetEventId: string) => void;
   onToggleUpdate: (pair: GoogleReverseUpdateCandidate) => void;
+  onCreateColorChange: (sheetEventId: string, colorId: string) => void;
+  onUpdateColorChange: (pairKey: string, colorId: string) => void;
   onClose: () => void;
   onConfirm: () => void;
+}
+
+const REVERSE_SYNC_CATEGORY_OPTIONS = [
+  { value: 'default', label: 'サロン' },
+  { value: '10', label: '誕生日' },
+  { value: '11', label: '個人の予定' },
+  { value: '5', label: 'かっぱ' },
+] as const;
+
+function getSkippedReasonLabel(reason: string): string {
+  switch (reason) {
+    case 'same_date_title_exists':
+      return '既にGoogleに同じ日付・タイトルの予定があります';
+    case 'only_google_color_diff_or_unchanged':
+      return 'google_color_id のみの差分です';
+    case 'not_target_user':
+      return '対象外ユーザーです';
+    case 'out_of_range':
+      return '過去予定または対象期間外です';
+    case 'linked_google_event_not_found':
+      return '紐づいているGoogle予定が見つかりません';
+    default:
+      return reason;
+  }
 }
 
 function formatDateTime(event: GoogleReverseCreateCandidate): string {
@@ -87,10 +117,14 @@ export default function GoogleReverseSyncPreviewModal({
   preview,
   selectedCreateIds,
   selectedUpdatePairKeys,
+  selectedCreateColorIds,
+  selectedUpdateColorIds,
   syncing,
   error,
   onToggleCreate,
   onToggleUpdate,
+  onCreateColorChange,
+  onUpdateColorChange,
   onClose,
   onConfirm,
 }: Props) {
@@ -138,18 +172,31 @@ export default function GoogleReverseSyncPreviewModal({
               {preview.createCandidates.map((event) => (
                 <label
                   key={event.sheetEventId}
-                  className="flex items-center gap-3 rounded-xl border border-zinc-100 px-3 py-2 active:bg-zinc-50"
+                  className="flex items-start gap-3 rounded-xl border border-zinc-100 px-3 py-2 active:bg-zinc-50"
                 >
                   <input
                     type="checkbox"
                     checked={selectedCreateIds.includes(event.sheetEventId)}
                     onChange={() => onToggleCreate(event.sheetEventId)}
                     disabled={syncing}
-                    className="h-4 w-4 shrink-0 accent-zinc-900"
+                    className="mt-1 h-4 w-4 shrink-0 accent-zinc-900"
                   />
-                  <span className="min-w-0">
+                  <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-zinc-800">{event.title}</span>
                     <span className="block text-xs text-zinc-400">{formatDateTime(event)}</span>
+                    <span className="mt-2 block">
+                      <span className="mb-1 block text-[11px] text-zinc-400">カテゴリ</span>
+                      <select
+                        value={selectedCreateColorIds[event.sheetEventId] ?? event.suggestedColorId}
+                        onChange={(e) => onCreateColorChange(event.sheetEventId, e.target.value)}
+                        disabled={syncing}
+                        className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-700"
+                      >
+                        {REVERSE_SYNC_CATEGORY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </span>
                   </span>
                 </label>
               ))}
@@ -178,10 +225,23 @@ export default function GoogleReverseSyncPreviewModal({
                       disabled={syncing}
                       className="mt-0.5 h-4 w-4 shrink-0 accent-zinc-900"
                     />
-                    <span className="min-w-0">
+                    <span className="min-w-0 flex-1">
                       <span className="block text-xs text-zinc-400">{pair.startDate.replaceAll('-', '/')}</span>
                       <span className="block truncate text-sm text-zinc-500">Google: {pair.googleTitle}</span>
                       <span className="block truncate text-sm font-medium text-zinc-800">アプリ: {pair.appTitle}</span>
+                      <span className="mt-2 block">
+                        <span className="mb-1 block text-[11px] text-zinc-400">カテゴリ</span>
+                        <select
+                          value={selectedUpdateColorIds[key] ?? pair.suggestedColorId}
+                          onChange={(e) => onUpdateColorChange(key, e.target.value)}
+                          disabled={syncing}
+                          className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-700"
+                        >
+                          {REVERSE_SYNC_CATEGORY_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </span>
                     </span>
                   </label>
                 );
@@ -191,9 +251,18 @@ export default function GoogleReverseSyncPreviewModal({
 
           <section>
             <p className="text-sm font-semibold text-zinc-900">スキップ {preview.skipped.length}件</p>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-              同じ日付・タイトルの予定がGoogleにある、または紐づき済みの予定です
-            </p>
+            <div className="mt-2 space-y-2">
+              {preview.skipped.length === 0 && (
+                <p className="rounded-xl bg-zinc-50 px-3 py-3 text-xs text-zinc-400">スキップはありません</p>
+              )}
+              {preview.skipped.map((item) => (
+                <div key={`${item.sheetEventId}::${item.reason}`} className="rounded-xl bg-zinc-50 px-3 py-2">
+                  <p className="truncate text-sm font-medium text-zinc-700">{item.title}</p>
+                  <p className="mt-1 text-xs text-zinc-400">{item.startDate.replaceAll('-', '/')}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{getSkippedReasonLabel(item.reason)}</p>
+                </div>
+              ))}
+            </div>
           </section>
         </div>
 

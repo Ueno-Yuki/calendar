@@ -117,11 +117,12 @@ function addOneHour(time: string): string {
   return `${String((h + 1) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-function toGCalBody(event: Event): calendar_v3.Schema$Event {
+function toGCalBody(event: Event, colorId?: string): calendar_v3.Schema$Event {
   const body: calendar_v3.Schema$Event = {
     summary: event.title,
     location: event.location || undefined,
     description: event.memo || undefined,
+    colorId: colorId && colorId !== 'default' ? colorId : undefined,
   };
 
   if (event.all_day) {
@@ -139,23 +140,23 @@ function toGCalBody(event: Event): calendar_v3.Schema$Event {
   return body;
 }
 
-export async function createGCalEvent(event: Event): Promise<string | null> {
+export async function createGCalEvent(event: Event, colorId?: string): Promise<string | null> {
   const calendar = await getAuthorizedCalendar();
   if (!calendar) return null;
   const res = await calendar.events.insert({
     calendarId: CALENDAR_ID(),
-    requestBody: toGCalBody(event),
+    requestBody: toGCalBody(event, colorId),
   });
   return res.data.id ?? null;
 }
 
-export async function updateGCalEvent(googleEventId: string, event: Event): Promise<void> {
+export async function updateGCalEvent(googleEventId: string, event: Event, colorId?: string): Promise<void> {
   const calendar = await getAuthorizedCalendar();
   if (!calendar || !googleEventId) return;
   await calendar.events.update({
     calendarId: CALENDAR_ID(),
     eventId: googleEventId,
-    requestBody: toGCalBody(event),
+    requestBody: toGCalBody(event, colorId),
   });
 }
 

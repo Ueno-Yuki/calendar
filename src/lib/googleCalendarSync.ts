@@ -99,6 +99,7 @@ export interface GoogleReverseSyncPreviewResult {
     startTime: string;
     endTime: string;
     allDay: boolean;
+    suggestedColorId: string;
   }>;
   updateCandidates: Array<{
     sheetEventId: string;
@@ -106,6 +107,7 @@ export interface GoogleReverseSyncPreviewResult {
     startDate: string;
     appTitle: string;
     googleTitle: string;
+    suggestedColorId: string;
   }>;
   skipped: Array<{
     sheetEventId: string;
@@ -121,6 +123,7 @@ export interface GoogleReverseSyncResult {
   updated: number;
   skipped: number;
   syncedAt: string;
+  errors?: string[];
   reason?: string;
 }
 
@@ -130,8 +133,8 @@ type ExistingEntry = { event: Event; sheetName: string; dataRowIndex: number };
 type GoogleSyncSelection = { eventIds?: string[]; colorIds?: string[] };
 type SheetEventEntry = { event: Event; sheetName: string; dataRowIndex: number };
 type GoogleReverseSelection = {
-  createIds: string[];
-  updatePairs: Array<{ sheetEventId: string; googleEventId: string }>;
+  createItems: Array<{ sheetEventId: string; colorId: string }>;
+  updateItems: Array<{ sheetEventId: string; googleEventId: string; colorId: string }>;
 };
 type GoogleCategoryDefinition = {
   categoryId: string;
@@ -151,6 +154,17 @@ const GOOGLE_CATEGORY_BY_COLOR_ID = new Map<string, GoogleCategoryDefinition>(
   GOOGLE_CATEGORY_DEFINITIONS.flatMap((category) =>
     category.colorIds.map((colorId) => [colorId, category] as const),
   ),
+);
+
+const REVERSE_SYNC_COLOR_OPTIONS = [
+  { colorId: 'default', label: 'サロン' },
+  { colorId: '10', label: '誕生日' },
+  { colorId: '11', label: '個人の予定' },
+  { colorId: '5', label: 'かっぱ' },
+] as const;
+
+const REVERSE_SYNC_ALLOWED_COLOR_IDS: Set<string> = new Set(
+  REVERSE_SYNC_COLOR_OPTIONS.map((option) => option.colorId),
 );
 
 function getGoogleCategory(colorId: string): GoogleCategoryDefinition {
@@ -229,23 +243,36 @@ export function parseGoogleSyncSelection(colorIdsQuery: string | null, body?: un
 }
 
 export function parseGoogleReverseSelection(body: unknown): GoogleReverseSelection {
-  if (!body || typeof body !== 'object') return { createIds: [], updatePairs: [] };
-  const record = body as { createIds?: unknown; updatePairs?: unknown };
-  const createIds = parseEventIdsParam(record.createIds);
-  const updatePairs = Array.isArray(record.updatePairs)
-    ? record.updatePairs
-        .filter((pair): pair is { sheetEventId: string; googleEventId: string } => {
-          if (!pair || typeof pair !== 'object') return false;
-          const p = pair as { sheetEventId?: unknown; googleEventId?: unknown };
-          return typeof p.sheetEventId === 'string' && typeof p.googleEventId === 'string';
+  if (!body || typeof body !== 'object') return { createItems: [], updateItems: [] };
+  const record = body as { createItems?: unknown; updateItems?: unknown };
+  const createItems = Array.isArray(record.createItems)
+    ? record.createItems
+        .filter((item): item is { sheetEventId: string; colorId: string } => {
+          if (!item || typeof item !== 'object') return false;
+          const p = item as { sheetEventId?: unknown; colorId?: unknown };
+          return typeof p.sheetEventId === 'string' && typeof p.colorId === 'string';
         })
-        .map((pair) => ({
-          sheetEventId: pair.sheetEventId.trim(),
-          googleEventId: pair.googleEventId.trim(),
+        .map((item) => ({
+          sheetEventId: item.sheetEventId.trim(),
+          colorId: normalizeReverseSyncColorId(item.colorId),
         }))
-        .filter((pair) => pair.sheetEventId && pair.googleEventId)
+        .filter((item) => item.sheetEventId && item.colorId)
     : [];
-  return { createIds, updatePairs };
+  const updateItems = Array.isArray(record.updateItems)
+    ? record.updateItems
+        .filter((item): item is { sheetEventId: string; googleEventId: string; colorId: string } => {
+          if (!item || typeof item !== 'object') return false;
+          const p = item as { sheetEventId?: unknown; googleEventId?: unknown; colorId?: unknown };
+          return typeof p.sheetEventId === 'string' && typeof p.googleEventId === 'string' && typeof p.colorId === 'string';
+        })
+        .map((item) => ({
+          sheetEventId: item.sheetEventId.trim(),
+          googleEventId: item.googleEventId.trim(),
+          colorId: normalizeReverseSyncColorId(item.colorId),
+        }))
+        .filter((item) => item.sheetEventId && item.googleEventId && item.colorId)
+    : [];
+  return { createItems, updateItems };
 }
 
 // Google Calendar API の Event.colorId を同期対象判定に使う。
@@ -269,6 +296,22 @@ function getEventStartForDebug(item: calendar_v3.Schema$Event): string {
 
 function getColorLabel(colorId: string): string {
   return colorId === 'default' ? 'デフォルト' : `色 ${colorId}`;
+}
+
+function normalizeReverseSyncColorId(colorId: string | undefined): string {
+  const normalized = (colorId ?? '').trim();
+  if (normalized === '3') return '10';
+  return REVERSE_SYNC_ALLOWED_COLOR_IDS.has(normalized) ? normalized : '11';
+}
+
+function inferReverseSyncColorId(event: Event): string {
+  const existingColorId = normalizeReverseSyncColorId(event.google_color_id);
+  if (event.google_color_id && REVERSE_SYNC_ALLOWED_COLOR_IDS.has(existingColorId)) {
+    return existingColorId;
+  }
+  if (event.title.includes('かっぱ') || event.title.includes('カッパ')) return '5';
+  if (event.title.includes('誕生日')) return '10';
+  return '11';
 }
 
 // ---- 簡易同期ロック ----
@@ -503,6 +546,7 @@ function eventToReversePreviewItem(event: Event) {
     startTime: event.start_time,
     endTime: event.end_time,
     allDay: event.all_day,
+    suggestedColorId: inferReverseSyncColorId(event),
   };
 }
 
@@ -897,7 +941,25 @@ export async function previewGoogleReverseSync(): Promise<GoogleReverseSyncPrevi
   const skipped: GoogleReverseSyncPreviewResult['skipped'] = [];
 
   for (const { event } of sheetEntries.values()) {
-    if (event.deleted || !isMotherEvent(event) || !isEventInSyncRange(event, range)) continue;
+    if (event.deleted) continue;
+    if (!isMotherEvent(event)) {
+      skipped.push({
+        sheetEventId: event.id,
+        title: event.title,
+        startDate: event.start_date,
+        reason: 'not_target_user',
+      });
+      continue;
+    }
+    if (!isEventInSyncRange(event, range)) {
+      skipped.push({
+        sheetEventId: event.id,
+        title: event.title,
+        startDate: event.start_date,
+        reason: 'out_of_range',
+      });
+      continue;
+    }
 
     const importKey = buildImportKey(event.start_date, event.title);
     if (event.google_event_id) {
@@ -919,13 +981,14 @@ export async function previewGoogleReverseSync(): Promise<GoogleReverseSyncPrevi
           startDate: event.start_date,
           appTitle: event.title,
           googleTitle: linkedGoogleEvent.title,
+          suggestedColorId: inferReverseSyncColorId(event),
         });
       } else {
         skipped.push({
           sheetEventId: event.id,
           title: event.title,
           startDate: event.start_date,
-          reason: 'linked_google_event_unchanged',
+          reason: 'only_google_color_diff_or_unchanged',
         });
       }
       continue;
@@ -952,6 +1015,7 @@ export async function previewGoogleReverseSync(): Promise<GoogleReverseSyncPrevi
         startDate: event.start_date,
         appTitle: event.title,
         googleTitle: differentTitleEvents[0].title,
+        suggestedColorId: inferReverseSyncColorId(event),
       });
       continue;
     }
@@ -976,9 +1040,9 @@ export async function syncAppToGoogle(selection: GoogleReverseSelection): Promis
   if (isSyncDisabled()) {
     return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'sync_disabled' };
   }
-  const createIds = new Set(selection.createIds);
-  const updatePairs = selection.updatePairs;
-  if (createIds.size === 0 && updatePairs.length === 0) {
+  const createItems = selection.createItems;
+  const updateItems = selection.updateItems;
+  if (createItems.length === 0 && updateItems.length === 0) {
     return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'no_events_selected' };
   }
 
@@ -1001,9 +1065,10 @@ export async function syncAppToGoogle(selection: GoogleReverseSelection): Promis
     let updated = 0;
     let skipped = 0;
     let sheetsChanged = 0;
+    const errors: string[] = [];
 
-    for (const sheetEventId of createIds) {
-      const entry = sheetEntries.get(sheetEventId);
+    for (const item of createItems) {
+      const entry = sheetEntries.get(item.sheetEventId);
       if (!entry || entry.event.deleted || !isMotherEvent(entry.event) || !isEventInSyncRange(entry.event, range)) {
         skipped++;
         continue;
@@ -1013,18 +1078,39 @@ export async function syncAppToGoogle(selection: GoogleReverseSelection): Promis
         continue;
       }
 
-      const googleEventId = await createGCalEvent(entry.event);
+      const colorId = normalizeReverseSyncColorId(item.colorId);
+      let googleEventId: string | null = null;
+      try {
+        googleEventId = await createGCalEvent(entry.event, colorId);
+      } catch {
+        skipped++;
+        errors.push(`${entry.event.start_date} ${entry.event.title}: create_failed`);
+        continue;
+      }
       if (!googleEventId) {
         skipped++;
+        errors.push(`${entry.event.start_date} ${entry.event.title}: create_failed`);
         continue;
       }
 
       const updatedEvent: Event = {
         ...entry.event,
         google_event_id: googleEventId,
+        google_color_id: colorId,
         updated_at: syncedAt,
       };
       await updateRowByHeaders(entry.sheetName, entry.dataRowIndex, eventToRecord(updatedEvent));
+      googleIndexes.byId.set(googleEventId, {
+        google_event_id: googleEventId,
+        title: updatedEvent.title,
+        start_date: updatedEvent.start_date,
+        end_date: updatedEvent.end_date,
+        start_time: updatedEvent.start_time,
+        end_time: updatedEvent.end_time,
+        all_day: updatedEvent.all_day,
+        location: updatedEvent.location,
+        memo: updatedEvent.memo,
+      });
       googleIndexes.byImportKey.set(buildImportKey(updatedEvent.start_date, updatedEvent.title), {
         google_event_id: googleEventId,
         title: updatedEvent.title,
@@ -1040,24 +1126,58 @@ export async function syncAppToGoogle(selection: GoogleReverseSelection): Promis
       sheetsChanged++;
     }
 
-    for (const pair of updatePairs) {
-      const entry = sheetEntries.get(pair.sheetEventId);
-      const googleEvent = googleIndexes.byId.get(pair.googleEventId);
+    for (const item of updateItems) {
+      const entry = sheetEntries.get(item.sheetEventId);
+      const googleEvent = googleIndexes.byId.get(item.googleEventId);
       if (!entry || !googleEvent || entry.event.deleted || !isMotherEvent(entry.event) || !isEventInSyncRange(entry.event, range)) {
         skipped++;
         continue;
       }
 
-      await updateGCalEvent(pair.googleEventId, entry.event);
-      if (entry.event.google_event_id !== pair.googleEventId) {
-        const updatedEvent: Event = {
-          ...entry.event,
-          google_event_id: pair.googleEventId,
-          updated_at: syncedAt,
-        };
-        await updateRowByHeaders(entry.sheetName, entry.dataRowIndex, eventToRecord(updatedEvent));
-        sheetsChanged++;
+      if (!hasGoogleDiff(entry.event, googleEvent)) {
+        skipped++;
+        continue;
       }
+
+      const colorId = normalizeReverseSyncColorId(item.colorId);
+      try {
+        await updateGCalEvent(item.googleEventId, entry.event, colorId);
+      } catch {
+        skipped++;
+        errors.push(`${entry.event.start_date} ${entry.event.title}: update_failed`);
+        continue;
+      }
+
+      const updatedEvent: Event = {
+        ...entry.event,
+        google_event_id: item.googleEventId,
+        google_color_id: colorId,
+        updated_at: syncedAt,
+      };
+      await updateRowByHeaders(entry.sheetName, entry.dataRowIndex, eventToRecord(updatedEvent));
+      googleIndexes.byId.set(item.googleEventId, {
+        google_event_id: item.googleEventId,
+        title: updatedEvent.title,
+        start_date: updatedEvent.start_date,
+        end_date: updatedEvent.end_date,
+        start_time: updatedEvent.start_time,
+        end_time: updatedEvent.end_time,
+        all_day: updatedEvent.all_day,
+        location: updatedEvent.location,
+        memo: updatedEvent.memo,
+      });
+      googleIndexes.byImportKey.set(buildImportKey(updatedEvent.start_date, updatedEvent.title), {
+        google_event_id: item.googleEventId,
+        title: updatedEvent.title,
+        start_date: updatedEvent.start_date,
+        end_date: updatedEvent.end_date,
+        start_time: updatedEvent.start_time,
+        end_time: updatedEvent.end_time,
+        all_day: updatedEvent.all_day,
+        location: updatedEvent.location,
+        memo: updatedEvent.memo,
+      });
+      sheetsChanged++;
       updated++;
     }
 
@@ -1065,7 +1185,7 @@ export async function syncAppToGoogle(selection: GoogleReverseSelection): Promis
       await setSyncMeta('events_last_updated_at', new Date().toISOString());
     }
     await setSyncMeta(LAST_SYNCED_KEY, syncedAt);
-    return { synced: true, created, updated, skipped, syncedAt };
+    return { synced: true, created, updated, skipped, syncedAt, ...(errors.length > 0 ? { errors } : {}) };
   } finally {
     await releaseSyncLock();
   }

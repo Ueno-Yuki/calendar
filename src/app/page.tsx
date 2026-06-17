@@ -105,6 +105,8 @@ export default function CalendarPage() {
   const [googleReverseSyncPreview, setGoogleReverseSyncPreview] = useState<GoogleReverseSyncPreview | null>(null);
   const [selectedReverseCreateIds, setSelectedReverseCreateIds] = useState<string[]>([]);
   const [selectedReverseUpdatePairKeys, setSelectedReverseUpdatePairKeys] = useState<string[]>([]);
+  const [selectedReverseCreateColorIds, setSelectedReverseCreateColorIds] = useState<Record<string, string>>({});
+  const [selectedReverseUpdateColorIds, setSelectedReverseUpdateColorIds] = useState<Record<string, string>>({});
   const [googleSyncMessage, setGoogleSyncMessage] = useState('');
   const [googleSyncError, setGoogleSyncError] = useState('');
   const [googleSyncModalError, setGoogleSyncModalError] = useState('');
@@ -466,6 +468,12 @@ export default function CalendarPage() {
         setGoogleReverseSyncPreview(data);
         setSelectedReverseCreateIds([]);
         setSelectedReverseUpdatePairKeys([]);
+        setSelectedReverseCreateColorIds(
+          Object.fromEntries(data.createCandidates.map((item) => [item.sheetEventId, item.suggestedColorId])),
+        );
+        setSelectedReverseUpdateColorIds(
+          Object.fromEntries(data.updateCandidates.map((item) => [googleReversePairKey(item), item.suggestedColorId])),
+        );
       } else {
         setGoogleSyncError('逆同期プレビューに失敗しました');
       }
@@ -540,8 +548,18 @@ export default function CalendarPage() {
     setGoogleReverseSyncPreview(null);
     setSelectedReverseCreateIds([]);
     setSelectedReverseUpdatePairKeys([]);
+    setSelectedReverseCreateColorIds({});
+    setSelectedReverseUpdateColorIds({});
     setGoogleSyncModalError('');
   }, [isGoogleSyncing]);
+
+  const handleReverseCreateColorChange = useCallback((sheetEventId: string, colorId: string) => {
+    setSelectedReverseCreateColorIds((current) => ({ ...current, [sheetEventId]: colorId }));
+  }, []);
+
+  const handleReverseUpdateColorChange = useCallback((pairKey: string, colorId: string) => {
+    setSelectedReverseUpdateColorIds((current) => ({ ...current, [pairKey]: colorId }));
+  }, []);
 
   const handleConfirmGoogleSync = useCallback(async () => {
     if (selectedGoogleEventIds.length === 0 || isGoogleSyncing) return;
@@ -604,14 +622,18 @@ export default function CalendarPage() {
       const res = await apiFetch('/api/sync/google/reverse', {
         method: 'POST',
         body: JSON.stringify({
-          createIds: selectedReverseCreateIds,
-          updatePairs: selectedUpdatePairs.map((pair) => ({
+          createItems: selectedReverseCreateIds.map((sheetEventId) => ({
+            sheetEventId,
+            colorId: selectedReverseCreateColorIds[sheetEventId] ?? '11',
+          })),
+          updateItems: selectedUpdatePairs.map((pair) => ({
             sheetEventId: pair.sheetEventId,
             googleEventId: pair.googleEventId,
+            colorId: selectedReverseUpdateColorIds[googleReversePairKey(pair)] ?? '11',
           })),
         }),
       });
-      const data = (await res.json().catch(() => null)) as { reason?: string } | null;
+      const data = (await res.json().catch(() => null)) as { reason?: string; errors?: string[] } | null;
 
       if (!res.ok) {
         setGoogleSyncModalError(data?.reason === 'no_events_selected' ? '反映する予定を選択してください' : 'Googleへの反映に失敗しました');
@@ -626,10 +648,16 @@ export default function CalendarPage() {
         return;
       }
 
-      setGoogleSyncMessage('Googleへ反映しました');
+      if (data?.errors && data.errors.length > 0) {
+        setGoogleSyncMessage(`Googleへ反映しました（一部失敗 ${data.errors.length}件）`);
+      } else {
+        setGoogleSyncMessage('Googleへ反映しました');
+      }
       setGoogleReverseSyncPreview(null);
       setSelectedReverseCreateIds([]);
       setSelectedReverseUpdatePairKeys([]);
+      setSelectedReverseCreateColorIds({});
+      setSelectedReverseUpdateColorIds({});
       await reloadEvents();
       setHasRemoteUpdates(false);
       refreshKnownLastUpdated();
@@ -644,7 +672,9 @@ export default function CalendarPage() {
     refreshKnownLastUpdated,
     reloadEvents,
     selectedReverseCreateIds,
+    selectedReverseCreateColorIds,
     selectedReverseUpdatePairKeys,
+    selectedReverseUpdateColorIds,
   ]);
 
   if (authError) {
@@ -736,10 +766,14 @@ export default function CalendarPage() {
           preview={googleReverseSyncPreview}
           selectedCreateIds={selectedReverseCreateIds}
           selectedUpdatePairKeys={selectedReverseUpdatePairKeys}
+          selectedCreateColorIds={selectedReverseCreateColorIds}
+          selectedUpdateColorIds={selectedReverseUpdateColorIds}
           syncing={isGoogleSyncing}
           error={googleSyncModalError}
           onToggleCreate={handleToggleReverseCreate}
           onToggleUpdate={handleToggleReverseUpdate}
+          onCreateColorChange={handleReverseCreateColorChange}
+          onUpdateColorChange={handleReverseUpdateColorChange}
           onClose={handleCloseReverseGooglePreview}
           onConfirm={handleConfirmReverseGoogleSync}
         />
