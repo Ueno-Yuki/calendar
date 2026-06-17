@@ -1,8 +1,8 @@
 import type { NextRequest } from 'next/server';
 import type { Event } from '@/types';
 import { getCurrentUser, AuthError } from '@/lib/auth';
-import { updateRow, appendRow, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
-import { findEventById, eventToValues } from '@/lib/eventsDb';
+import { updateRowByHeaders, appendRowByHeaders, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
+import { findEventById, eventToRecord } from '@/lib/eventsDb';
 import { sendInstantNotification } from '@/lib/notificationService';
 import { setSyncMeta } from '@/lib/syncMetaDb';
 
@@ -139,13 +139,13 @@ export async function PUT(
         deleted: true,
         updated_at: updated.updated_at,
       };
-      await updateRow(found.sheetName, found.dataRowIndex, eventToValues(deletedOld));
+      await updateRowByHeaders(found.sheetName, found.dataRowIndex, eventToRecord(deletedOld));
 
       const [newYStr, newMStr] = input.start_date.split('-');
       await ensureMonthSheet(parseInt(newYStr), parseInt(newMStr));
-      await appendRow(getMonthSheetName(parseInt(newYStr), parseInt(newMStr)), eventToValues(updated));
+      await appendRowByHeaders(getMonthSheetName(parseInt(newYStr), parseInt(newMStr)), eventToRecord(updated));
     } else {
-      await updateRow(found.sheetName, found.dataRowIndex, eventToValues(updated));
+      await updateRowByHeaders(found.sheetName, found.dataRowIndex, eventToRecord(updated));
     }
 
     setSyncMeta('events_last_updated_at', new Date().toISOString()).catch(() => {});
@@ -195,7 +195,7 @@ export async function DELETE(
       updated_at: new Date().toISOString(),
     };
 
-    await updateRow(found.sheetName, found.dataRowIndex, eventToValues(deleted));
+    await updateRowByHeaders(found.sheetName, found.dataRowIndex, eventToRecord(deleted));
 
     setSyncMeta('events_last_updated_at', new Date().toISOString()).catch(() => {});
 

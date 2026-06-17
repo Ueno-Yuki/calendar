@@ -5,8 +5,10 @@ export const EVENT_HEADERS = [
   'id', 'owner', 'person', 'title',
   'start_date', 'end_date', 'start_time', 'end_time',
   'location', 'memo', 'all_day', 'source',
-  'google_event_id', 'google_color_id', 'created_at', 'updated_at', 'deleted',
+  'google_event_id', 'created_at', 'updated_at', 'deleted', 'google_color_id',
 ] as const;
+
+export type SheetWritableValue = string | number | boolean | null | undefined;
 
 function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
@@ -87,6 +89,49 @@ export async function updateRow(
     valueInputOption: 'RAW',
     requestBody: { values: [values] },
   });
+}
+
+export async function getSheetHeaders(sheetName: string): Promise<string[]> {
+  try {
+    const sheets = getSheetsClient();
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: getSpreadsheetId(),
+      range: `${sheetName}!1:1`,
+    });
+    const headers = (res.data.values?.[0] as string[] | undefined) ?? [];
+    return headers.length > 0 ? headers : [...EVENT_HEADERS];
+  } catch {
+    return [...EVENT_HEADERS];
+  }
+}
+
+function toCellString(value: SheetWritableValue): string {
+  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
+  return String(value ?? '');
+}
+
+export function buildValuesByHeaders(
+  headers: readonly string[],
+  record: Record<string, SheetWritableValue>,
+): string[] {
+  return headers.map((header) => toCellString(record[header]));
+}
+
+export async function appendRowByHeaders(
+  sheetName: string,
+  record: Record<string, SheetWritableValue>,
+): Promise<void> {
+  const headers = await getSheetHeaders(sheetName);
+  await appendRow(sheetName, buildValuesByHeaders(headers, record));
+}
+
+export async function updateRowByHeaders(
+  sheetName: string,
+  dataRowIndex: number,
+  record: Record<string, SheetWritableValue>,
+): Promise<void> {
+  const headers = await getSheetHeaders(sheetName);
+  await updateRow(sheetName, dataRowIndex, buildValuesByHeaders(headers, record));
 }
 
 /**

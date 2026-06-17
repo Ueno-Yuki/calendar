@@ -1,8 +1,8 @@
 import type { NextRequest } from 'next/server';
 import type { Event } from '@/types';
 import { getCurrentUser, AuthError } from '@/lib/auth';
-import { getRows, appendRow, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
-import { parseEventRow, eventToValues } from '@/lib/eventsDb';
+import { getRows, appendRowByHeaders, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
+import { parseEventRow, eventToRecord, isValidDeletedCell } from '@/lib/eventsDb';
 import { upsertTemplate } from '@/lib/templatesDb';
 import { setSyncMeta } from '@/lib/syncMetaDb';
 import { sendInstantNotification } from '@/lib/notificationService';
@@ -115,7 +115,19 @@ export async function GET(request: NextRequest) {
     const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;
     const lastDay = getLastDayOfMonth(year, month);
 
-    const events: Event[] = [...prevRows, ...currentRows]
+    const rows = [...prevRows, ...currentRows];
+    rows.forEach((row) => {
+      if (!isValidDeletedCell(row.deleted)) {
+        console.error('[events:get] invalid deleted cell', {
+          id: row.id ?? '',
+          title: row.title ?? '',
+          start_date: row.start_date ?? '',
+          deleted: row.deleted ?? '',
+        });
+      }
+    });
+
+    const events: Event[] = rows
       .filter((r) => r.deleted !== 'TRUE')
       .filter((r) => r.start_date <= lastDay && r.end_date >= firstDay)
       .map(parseEventRow);
@@ -181,7 +193,7 @@ export async function POST(request: NextRequest) {
     const startYear = parseInt(startYearStr);
     const startMonth = parseInt(startMonthStr);
     await ensureMonthSheet(startYear, startMonth);
-    await appendRow(getMonthSheetName(startYear, startMonth), eventToValues(event));
+    await appendRowByHeaders(getMonthSheetName(startYear, startMonth), eventToRecord(event));
 
     setSyncMeta('events_last_updated_at', new Date().toISOString()).catch(() => {});
 

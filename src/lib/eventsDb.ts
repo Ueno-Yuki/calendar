@@ -27,13 +27,18 @@ export function parseEventRow(row: Record<string, string>): Event {
   };
 }
 
-/** Event を Sheets の列順に並んだ文字列配列に変換する */
-export function eventToValues(event: Event): string[] {
-  return (EVENT_HEADERS as readonly string[]).map((header) => {
+/** Event をヘッダー名ベースの record に変換する */
+export function eventToRecord(event: Event): Record<string, string> {
+  const record: Record<string, string> = {};
+  (EVENT_HEADERS as readonly string[]).forEach((header) => {
     const value = event[header as keyof Event];
-    if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
-    return String(value ?? '');
+    record[header] = typeof value === 'boolean' ? (value ? 'TRUE' : 'FALSE') : String(value ?? '');
   });
+  return record;
+}
+
+export function isValidDeletedCell(value: string | undefined): boolean {
+  return value === undefined || value === '' || value === 'TRUE' || value === 'FALSE';
 }
 
 /**

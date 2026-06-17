@@ -2,13 +2,13 @@ import type { calendar_v3 } from 'googleapis';
 import type { Event } from '@/types';
 import {
   getRows,
-  appendRow,
-  updateRow,
+  appendRowByHeaders,
+  updateRowByHeaders,
   getMonthSheetName,
   ensureMonthSheet,
   getAllMonthSheetNames,
 } from '@/lib/sheets';
-import { parseEventRow, eventToValues } from '@/lib/eventsDb';
+import { parseEventRow, eventToRecord } from '@/lib/eventsDb';
 import { getSyncMeta, setSyncMeta } from '@/lib/syncMetaDb';
 import { createGCalEvent, getAuthorizedCalendar, parseGCalEvent, updateGCalEvent } from '@/lib/googleCalendar';
 
@@ -596,7 +596,7 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
         deleted: false,
       };
 
-      await appendRow(targetSheet, eventToValues(event));
+      await appendRowByHeaders(targetSheet, eventToRecord(event));
       // append後 existingMap を即時更新 → 同一同期内で再 append しない
       existingMap.set(item.id, { event, sheetName: targetSheet, dataRowIndex: rowCount });
       added++;
@@ -676,7 +676,7 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
         if (existing && !existing.event.deleted) {
           const deletedEvent: Event = { ...existing.event, deleted: true, updated_at: syncedAt };
           await ensureMonthSheetByName(existing.sheetName);
-          await updateRow(existing.sheetName, existing.dataRowIndex, eventToValues(deletedEvent));
+          await updateRowByHeaders(existing.sheetName, existing.dataRowIndex, eventToRecord(deletedEvent));
           existingMap.set(item.id, { ...existing, event: deletedEvent }); // マップ更新
           deleted++;
         }
@@ -728,7 +728,7 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
           deleted: false,
         };
 
-        await appendRow(targetSheet, eventToValues(newEvent));
+        await appendRowByHeaders(targetSheet, eventToRecord(newEvent));
         // append後 existingMap を即時更新 → 同一同期内で再 append しない
         existingMap.set(item.id, { event: newEvent, sheetName: targetSheet, dataRowIndex: rowCount });
         existingImportKeys.add(importKey);
@@ -762,7 +762,7 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
             updated_at: syncedAt,
           };
           await ensureMonthSheetByName(existing.sheetName);
-          await updateRow(existing.sheetName, existing.dataRowIndex, eventToValues(updatedEvent));
+          await updateRowByHeaders(existing.sheetName, existing.dataRowIndex, eventToRecord(updatedEvent));
           existingMap.set(item.id, { ...existing, event: updatedEvent }); // マップ更新
           updated++;
         }
@@ -1024,7 +1024,7 @@ export async function syncAppToGoogle(selection: GoogleReverseSelection): Promis
         google_event_id: googleEventId,
         updated_at: syncedAt,
       };
-      await updateRow(entry.sheetName, entry.dataRowIndex, eventToValues(updatedEvent));
+      await updateRowByHeaders(entry.sheetName, entry.dataRowIndex, eventToRecord(updatedEvent));
       googleIndexes.byImportKey.set(buildImportKey(updatedEvent.start_date, updatedEvent.title), {
         google_event_id: googleEventId,
         title: updatedEvent.title,
@@ -1055,7 +1055,7 @@ export async function syncAppToGoogle(selection: GoogleReverseSelection): Promis
           google_event_id: pair.googleEventId,
           updated_at: syncedAt,
         };
-        await updateRow(entry.sheetName, entry.dataRowIndex, eventToValues(updatedEvent));
+        await updateRowByHeaders(entry.sheetName, entry.dataRowIndex, eventToRecord(updatedEvent));
         sheetsChanged++;
       }
       updated++;
@@ -1211,6 +1211,11 @@ export interface CleanupResult {
   cleaned: number;
 }
 
+export interface RepairGoogleColumnAlignmentResult {
+  scannedSheets: number;
+  repaired: number;
+}
+
 export async function cleanupGoogleDuplicates(): Promise<CleanupResult> {
   const monthSheetNames = await getAllMonthSheetNames();
 
@@ -1258,10 +1263,58 @@ export async function cleanupGoogleDuplicates(): Promise<CleanupResult> {
       const event = parseEventRow(row);
       const deletedEvent: Event = { ...event, deleted: true, updated_at: now };
       await ensureMonthSheetByName(entry.sheetName);
-      await updateRow(entry.sheetName, entry.dataRowIndex, eventToValues(deletedEvent));
+      await updateRowByHeaders(entry.sheetName, entry.dataRowIndex, eventToRecord(deletedEvent));
       cleaned++;
     }
   }
 
   return { scannedSheets: monthSheetNames.length, duplicateIds, cleaned };
+}
+
+function looksLikeShiftedGoogleColorId(value: string | undefined): boolean {
+  return /^(default|[1-9]|1[01])$/.test((value ?? '').trim());
+}
+
+function normalizeDeletedValue(value: string | undefined): 'TRUE' | 'FALSE' {
+  return value === 'TRUE' ? 'TRUE' : 'FALSE';
+}
+
+// ---- Google同期の列ズレ修復 ----
+// 旧実装で source=google 行の created_at / updated_at / deleted / google_color_id が
+// 1列ずつ後ろへずれたデータを補正する。
+// 対象:
+// - source = google
+// - created_at に colorId ("default", "1"..."11") が入っている
+// 補正:
+// - google_color_id = created_at
+// - created_at = updated_at
+// - updated_at = deleted
+// - deleted = google_color_id (TRUE/FALSE に正規化)
+export async function repairGoogleShiftedEventColumns(): Promise<RepairGoogleColumnAlignmentResult> {
+  const monthSheetNames = await getAllMonthSheetNames();
+  let repaired = 0;
+
+  for (const sheetName of monthSheetNames) {
+    const rows = await getRows(sheetName);
+
+    for (let idx = 0; idx < rows.length; idx++) {
+      const row = rows[idx];
+      if (row.source !== 'google') continue;
+      if (!looksLikeShiftedGoogleColorId(row.created_at)) continue;
+
+      const repairedRow: Record<string, string> = {
+        ...row,
+        google_color_id: row.created_at ?? '',
+        created_at: row.updated_at ?? '',
+        updated_at: row.deleted ?? '',
+        deleted: normalizeDeletedValue(row.google_color_id),
+      };
+
+      await ensureMonthSheetByName(sheetName);
+      await updateRowByHeaders(sheetName, idx, repairedRow);
+      repaired++;
+    }
+  }
+
+  return { scannedSheets: monthSheetNames.length, repaired };
 }
