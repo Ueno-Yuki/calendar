@@ -32,6 +32,11 @@ interface GoogleStatusResponse {
   syncDisabled: boolean;
 }
 
+type RefreshCompletion = {
+  resolve: () => void;
+  reject: (error: Error) => void;
+};
+
 function canUseGoogleSync(role: FamilyRole | null): boolean {
   return role === 'mother' || role === 'me';
 }
@@ -114,7 +119,7 @@ export default function CalendarPage() {
   // refでクロージャ内から最新状態を参照する
   const isRefreshBlockedRef = useRef(false);
   const knownLastUpdatedAtRef = useRef<string | null | undefined>(undefined);
-  const refreshCompletionRef = useRef<(() => void) | null>(null);
+  const refreshCompletionRef = useRef<RefreshCompletion | null>(null);
 
   useEffect(() => {
     knownLastUpdatedAtRef.current = knownLastUpdatedAt;
@@ -226,15 +231,19 @@ export default function CalendarPage() {
   }, [fetchLastUpdatedAt, setKnownLastUpdated]);
 
   const reloadEvents = useCallback((): Promise<void> => {
-    setRefreshKey((k) => k + 1);
-    return new Promise((resolve) => {
-      refreshCompletionRef.current = resolve;
+    return new Promise((resolve, reject) => {
+      refreshCompletionRef.current?.reject(new Error('reload superseded'));
+      refreshCompletionRef.current = { resolve, reject };
+      setRefreshKey((k) => k + 1);
     });
   }, []);
 
   useEffect(() => {
     const key = `${year}-${String(month).padStart(2, '0')}`;
+    const requestUrl = `/api/events?year=${year}&month=${month}`;
+    const currentRefreshKey = refreshKey;
     const isRefreshTriggered = refreshKey !== prevRefreshKeyRef.current;
+    const refreshRequest = isRefreshTriggered ? refreshCompletionRef.current : null;
     prevRefreshKeyRef.current = refreshKey;
 
     if (isRefreshTriggered) {
@@ -257,7 +266,7 @@ export default function CalendarPage() {
     }
 
     let cancelled = false;
-    apiFetch(`/api/events?year=${year}&month=${month}`)
+    apiFetch(requestUrl)
       .then((res) => {
         if (!res.ok) throw new Error('fetch failed');
         return res.json() as Promise<EventsResponse>;
@@ -271,21 +280,40 @@ export default function CalendarPage() {
           pendingDateRef.current = null;
         }
         hasLoadedRef.current = true;
+        if (refreshRequest && refreshCompletionRef.current === refreshRequest) {
+          refreshRequest.resolve();
+          refreshCompletionRef.current = null;
+        }
       })
       .catch((err: unknown) => {
+        if (cancelled) return;
+        const errorMessage = err instanceof Error ? err.message : 'unknown error';
+        console.error('[events:reload] fetch failed', {
+          year,
+          month,
+          refreshKey: currentRefreshKey,
+          requestUrl,
+          errorMessage,
+        });
         if (err instanceof ApiAuthError) setAuthError(true);
+        if (refreshRequest && refreshCompletionRef.current === refreshRequest) {
+          refreshRequest.reject(new Error(errorMessage));
+          refreshCompletionRef.current = null;
+        }
       })
       .finally(() => {
         if (!cancelled) {
           setLoading(false);
           setSyncing(false);
-          refreshCompletionRef.current?.();
-          refreshCompletionRef.current = null;
         }
       });
 
     return () => {
       cancelled = true;
+      if (refreshRequest && refreshCompletionRef.current === refreshRequest) {
+        refreshRequest.reject(new Error('reload cancelled'));
+        refreshCompletionRef.current = null;
+      }
     };
   }, [year, month, refreshKey]);
 
@@ -355,15 +383,25 @@ export default function CalendarPage() {
   // 予定保存・削除後: 自分の操作は即時反映し、ポーリングの既知値を更新する
   // refreshKnownLastUpdated で自分の操作を knownLastUpdatedAt に反映し、次のポーリングで二重リロードしない
   const handleEventCreated = () => {
-    void reloadEvents();
-    setHasRemoteUpdates(false);
-    refreshKnownLastUpdated();
+    void reloadEvents()
+      .then(() => {
+        setHasRemoteUpdates(false);
+        return refreshKnownLastUpdated();
+      })
+      .catch(() => {
+        setGoogleSyncError('予定の再取得に失敗しました');
+      });
   };
 
   const handleEventDeleted = () => {
-    void reloadEvents();
-    setHasRemoteUpdates(false);
-    refreshKnownLastUpdated();
+    void reloadEvents()
+      .then(() => {
+        setHasRemoteUpdates(false);
+        return refreshKnownLastUpdated();
+      })
+      .catch(() => {
+        setGoogleSyncError('予定の再取得に失敗しました');
+      });
   };
 
   const handleRefreshBlockChange = useCallback((blocked: boolean) => {
@@ -374,11 +412,15 @@ export default function CalendarPage() {
   const handleManualRefresh = useCallback(async () => {
     if (isRefreshBlockedRef.current || isRefreshing) return;
     setIsRefreshing(true);
+    setGoogleSyncMessage('');
+    setGoogleSyncError('');
     try {
       await reloadEvents();
       const latest = await fetchLastUpdatedAt();
       if (latest !== undefined) setKnownLastUpdated(latest);
       setHasRemoteUpdates(false);
+    } catch {
+      setGoogleSyncError('予定の再取得に失敗しました');
     } finally {
       setIsRefreshing(false);
     }
@@ -568,6 +610,7 @@ export default function CalendarPage() {
     setGoogleSyncModalError('');
     setGoogleSyncMessage('');
     setGoogleSyncError('');
+    let syncSucceeded = false;
     try {
       const res = await apiFetch('/api/sync/google', {
         method: 'POST',
@@ -590,18 +633,26 @@ export default function CalendarPage() {
       }
       if (data?.reason === 'too_soon') {
         setGoogleSyncMessage('直近で同期済みです');
-      } else {
-        setGoogleSyncMessage('Google同期しました');
+        setGoogleSyncPreview(null);
+        setSelectedGoogleEventIds([]);
+        setExpandedGoogleCategoryIds([]);
+        return;
       }
 
+      syncSucceeded = true;
       setGoogleSyncPreview(null);
       setSelectedGoogleEventIds([]);
       setExpandedGoogleCategoryIds([]);
       await reloadEvents();
+      setGoogleSyncMessage('Google同期しました');
       setHasRemoteUpdates(false);
       refreshKnownLastUpdated();
     } catch {
-      setGoogleSyncModalError('Google同期に失敗しました');
+      if (syncSucceeded) {
+        setGoogleSyncError('Google同期後の予定再取得に失敗しました');
+      } else {
+        setGoogleSyncModalError('Google同期に失敗しました');
+      }
     } finally {
       setIsGoogleSyncing(false);
     }
@@ -618,6 +669,7 @@ export default function CalendarPage() {
     setGoogleSyncModalError('');
     setGoogleSyncMessage('');
     setGoogleSyncError('');
+    let syncSucceeded = false;
     try {
       const res = await apiFetch('/api/sync/google/reverse', {
         method: 'POST',
@@ -648,21 +700,26 @@ export default function CalendarPage() {
         return;
       }
 
-      if (data?.errors && data.errors.length > 0) {
-        setGoogleSyncMessage(`Googleへ反映しました（一部失敗 ${data.errors.length}件）`);
-      } else {
-        setGoogleSyncMessage('Googleへ反映しました');
-      }
+      syncSucceeded = true;
       setGoogleReverseSyncPreview(null);
       setSelectedReverseCreateIds([]);
       setSelectedReverseUpdatePairKeys([]);
       setSelectedReverseCreateColorIds({});
       setSelectedReverseUpdateColorIds({});
       await reloadEvents();
+      if (data?.errors && data.errors.length > 0) {
+        setGoogleSyncMessage(`Googleへ反映しました（一部失敗 ${data.errors.length}件）`);
+      } else {
+        setGoogleSyncMessage('Googleへ反映しました');
+      }
       setHasRemoteUpdates(false);
       refreshKnownLastUpdated();
     } catch {
-      setGoogleSyncModalError('Googleへの反映に失敗しました');
+      if (syncSucceeded) {
+        setGoogleSyncError('Google反映後の予定再取得に失敗しました');
+      } else {
+        setGoogleSyncModalError('Googleへの反映に失敗しました');
+      }
     } finally {
       setIsGoogleSyncing(false);
     }
