@@ -298,6 +298,20 @@ function getColorLabel(colorId: string): string {
   return colorId === 'default' ? 'デフォルト' : `色 ${colorId}`;
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'unknown error';
+}
+
+function getErrorStack(error: unknown): string | undefined {
+  return error instanceof Error ? error.stack : undefined;
+}
+
+function getGoogleApiErrorResponse(error: unknown): unknown {
+  if (!error || typeof error !== 'object') return undefined;
+  const maybeError = error as { response?: { data?: unknown } };
+  return maybeError.response?.data;
+}
+
 function normalizeReverseSyncColorId(colorId: string | undefined): string {
   const normalized = (colorId ?? '').trim();
   if (normalized === '3') return '10';
@@ -678,13 +692,20 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
     return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'locked' };
   }
 
+  let timeMin = '';
+  let timeMax = '';
+  let fetchedCount = 0;
+  let added = 0;
+  let updated = 0;
+  let deleted = 0;
+
   try {
     const calendar = await getAuthorizedCalendar();
     if (!calendar) {
       return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'not_connected' };
     }
 
-    const { timeMin, timeMax } = currentJstToYearEndRange();
+    ({ timeMin, timeMax } = currentJstToYearEndRange());
     // 削除済み含めて取得することで Google 側の削除を検知できる
     const items = await listGCalItems(calendar, {
       calendarId: CALENDAR_ID(),
@@ -694,15 +715,13 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
       maxResults: 2500,
       showDeleted: true,
     });
+    fetchedCount = items.length;
 
     const existingMap = await buildGoogleEventIdMap();
     const existingImportKeys = await buildExistingImportKeySet();
     const syncedAt = new Date().toISOString();
     // processedIds: 同一同期内で同じ item.id を二重処理しない
     const processedIds = new Set<string>();
-    let added = 0;
-    let updated = 0;
-    let deleted = 0;
     let skippedAlreadyImported = 0;
 
     for (const item of items) {
@@ -818,6 +837,22 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
     }
     await setSyncMeta(LAST_SYNCED_KEY, syncedAt);
     return { synced: true, added, updated, deleted, syncedAt, skippedAlreadyImported };
+  } catch (error) {
+    console.error('[google-sync] syncGoogleToApp failed', {
+      calendarId: CALENDAR_ID(),
+      timeMin,
+      timeMax,
+      selectedColorIds: selection.colorIds ?? [],
+      selectedEventIds: selection.eventIds ?? [],
+      fetchedCount,
+      added,
+      updated,
+      deleted,
+      googleApiResponse: getGoogleApiErrorResponse(error),
+      errorMessage: getErrorMessage(error),
+      stack: getErrorStack(error),
+    });
+    throw error;
   } finally {
     await releaseSyncLock();
   }

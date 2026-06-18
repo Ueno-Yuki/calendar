@@ -18,6 +18,29 @@ function getPrevMonth(year: number, month: number): { year: number; month: numbe
   return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getRowsWithRetry(sheetName: string): Promise<Record<string, string>[]> {
+  const maxAttempts = 2;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await getRows(sheetName);
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        await delay(500);
+        continue;
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 // ---- バリデーション ----
 
 interface EventInput {
@@ -108,8 +131,8 @@ export async function GET(request: NextRequest) {
     const prevSheetName = getMonthSheetName(prev.year, prev.month);
 
     const [currentRows, prevRows] = await Promise.all([
-      getRows(currentSheetName),
-      getRows(prevSheetName),
+      getRowsWithRetry(currentSheetName),
+      getRowsWithRetry(prevSheetName),
     ]);
 
     const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;

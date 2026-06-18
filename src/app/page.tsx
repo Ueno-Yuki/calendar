@@ -32,10 +32,18 @@ interface GoogleStatusResponse {
   syncDisabled: boolean;
 }
 
+interface EventsCacheEntry {
+  events: Event[];
+  fetchedAt: string;
+  eventsLastUpdatedAt: string | null;
+}
+
 type RefreshCompletion = {
   resolve: () => void;
   reject: (error: Error) => void;
 };
+
+const EVENTS_CACHE_PREFIX = 'events:';
 
 function canUseGoogleSync(role: FamilyRole | null): boolean {
   return role === 'mother' || role === 'me';
@@ -72,6 +80,46 @@ function getInitialRouteState() {
 
   const [year, month] = dateParam.split('-').map(Number);
   return { year, month, pendingDate: dateParam };
+}
+
+function getEventsCacheKey(year: number, month: number): string {
+  return `${EVENTS_CACHE_PREFIX}${year}-${String(month).padStart(2, '0')}`;
+}
+
+function readEventsCache(year: number, month: number): EventsCacheEntry | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(getEventsCacheKey(year, month));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<EventsCacheEntry>;
+    if (!Array.isArray(parsed.events) || typeof parsed.fetchedAt !== 'string') return null;
+    return {
+      events: parsed.events as Event[],
+      fetchedAt: parsed.fetchedAt,
+      eventsLastUpdatedAt: typeof parsed.eventsLastUpdatedAt === 'string' ? parsed.eventsLastUpdatedAt : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeEventsCache(
+  year: number,
+  month: number,
+  events: Event[],
+  eventsLastUpdatedAt: string | null,
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const entry: EventsCacheEntry = {
+      events,
+      fetchedAt: new Date().toISOString(),
+      eventsLastUpdatedAt,
+    };
+    localStorage.setItem(getEventsCacheKey(year, month), JSON.stringify(entry));
+  } catch {
+    // ignore localStorage errors
+  }
 }
 
 export default function CalendarPage() {
@@ -206,6 +254,7 @@ export default function CalendarPage() {
   const cacheRef = useRef<Record<string, Event[]>>({});
   const prevRefreshKeyRef = useRef(0);
   const hasLoadedRef = useRef(false);
+  const failedMonthKeysRef = useRef<Set<string>>(new Set());
 
   const fetchLastUpdatedAt = useCallback(async (): Promise<string | null | undefined> => {
     try {
@@ -246,24 +295,33 @@ export default function CalendarPage() {
     const isRefreshTriggered = refreshKey !== prevRefreshKeyRef.current;
     const refreshRequest = isRefreshTriggered ? refreshCompletionRef.current : null;
     prevRefreshKeyRef.current = refreshKey;
+    const cachedEvents = !isRefreshTriggered ? cacheRef.current[key] : undefined;
+    const localCachedEntry = !isRefreshTriggered && !cachedEvents ? readEventsCache(year, month) : null;
+    const shouldUseCache = !isRefreshTriggered && (cachedEvents !== undefined || localCachedEntry !== null);
 
-    if (isRefreshTriggered) {
-      delete cacheRef.current[key];
-    }
-
-    if (!isRefreshTriggered && cacheRef.current[key]) {
+    if (cachedEvents !== undefined) {
       setEventsLoadError('');
-      setEvents(cacheRef.current[key]);
+      setEvents(cachedEvents);
+      hasLoadedRef.current = true;
       if (pendingDateRef.current) {
         setSelectedDate(pendingDateRef.current);
         pendingDateRef.current = null;
       }
-      return;
+    } else if (localCachedEntry) {
+      cacheRef.current[key] = localCachedEntry.events;
+      setEventsLoadError('');
+      setEvents(localCachedEntry.events);
+      hasLoadedRef.current = true;
+      if (pendingDateRef.current) {
+        setSelectedDate(pendingDateRef.current);
+        pendingDateRef.current = null;
+      }
     }
 
-    if (!hasLoadedRef.current) {
+    if (!hasLoadedRef.current && !shouldUseCache) {
       setLoading(true);
     } else {
+      setLoading(false);
       setSyncing(true);
     }
 
@@ -276,6 +334,8 @@ export default function CalendarPage() {
       .then((data) => {
         if (cancelled) return;
         cacheRef.current[key] = data.events;
+        writeEventsCache(year, month, data.events, knownLastUpdatedAtRef.current ?? null);
+        failedMonthKeysRef.current.delete(key);
         setEventsLoadError('');
         setEvents(data.events);
         if (pendingDateRef.current) {
@@ -291,6 +351,7 @@ export default function CalendarPage() {
       .catch((err: unknown) => {
         if (cancelled) return;
         const errorMessage = err instanceof Error ? err.message : 'unknown error';
+        failedMonthKeysRef.current.add(key);
         console.error('[events:reload] fetch failed', {
           year,
           month,
@@ -393,7 +454,7 @@ export default function CalendarPage() {
         return refreshKnownLastUpdated();
       })
       .catch(() => {
-        setGoogleSyncError('予定の再取得に失敗しました');
+        setEventsLoadError('予定の読み込みに失敗しました');
       });
   };
 
@@ -404,7 +465,7 @@ export default function CalendarPage() {
         return refreshKnownLastUpdated();
       })
       .catch(() => {
-        setGoogleSyncError('予定の再取得に失敗しました');
+        setEventsLoadError('予定の読み込みに失敗しました');
       });
   };
 
@@ -426,7 +487,6 @@ export default function CalendarPage() {
       setHasRemoteUpdates(false);
     } catch {
       setEventsLoadError('予定の読み込みに失敗しました');
-      setGoogleSyncError('予定の再取得に失敗しました');
     } finally {
       setIsRefreshing(false);
     }
@@ -655,7 +715,7 @@ export default function CalendarPage() {
       refreshKnownLastUpdated();
     } catch {
       if (syncSucceeded) {
-        setGoogleSyncError('Google同期後の予定再取得に失敗しました');
+        setEventsLoadError('予定の読み込みに失敗しました');
       } else {
         setGoogleSyncModalError('Google同期に失敗しました');
       }
@@ -722,7 +782,7 @@ export default function CalendarPage() {
       refreshKnownLastUpdated();
     } catch {
       if (syncSucceeded) {
-        setGoogleSyncError('Google反映後の予定再取得に失敗しました');
+        setEventsLoadError('予定の読み込みに失敗しました');
       } else {
         setGoogleSyncModalError('Googleへの反映に失敗しました');
       }
