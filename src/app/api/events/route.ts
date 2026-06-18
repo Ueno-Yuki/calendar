@@ -133,7 +133,12 @@ export async function GET(request: NextRequest) {
       .map(parseEventRow);
 
     return Response.json({ events });
-  } catch {
+  } catch (error) {
+    console.error('[events:get] failed to read sheets', {
+      year,
+      month,
+      errorMessage: error instanceof Error ? error.message : 'unknown error',
+    });
     return Response.json({ error: 'データ取得に失敗しました' }, { status: 500 });
   }
 }

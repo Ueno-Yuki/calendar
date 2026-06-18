@@ -10,6 +10,20 @@ export const EVENT_HEADERS = [
 
 export type SheetWritableValue = string | number | boolean | null | undefined;
 
+function isSheetNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const maybeError = error as {
+    code?: number;
+    message?: string;
+    response?: { status?: number; data?: { error?: { message?: string } } };
+  };
+  const message = maybeError.response?.data?.error?.message ?? maybeError.message ?? '';
+  return (
+    maybeError.code === 400 ||
+    maybeError.response?.status === 400
+  ) && message.includes('Unable to parse range');
+}
+
 function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -31,7 +45,8 @@ const getSpreadsheetId = () => {
 /**
  * シート名から全行を取得する。
  * 1行目をヘッダーとして使用し、各行をオブジェクトとして返す。
- * シートが存在しない場合は空配列を返す。
+ * シートが存在しない場合のみ空配列を返す。
+ * Sheets API失敗・認証失敗・通信失敗は throw する。
  */
 export async function getRows(sheetName: string): Promise<Record<string, string>[]> {
   try {
@@ -50,9 +65,11 @@ export async function getRows(sheetName: string): Promise<Record<string, string>
       });
       return record;
     });
-  } catch {
-    // シートが存在しない場合などは空配列を返す
-    return [];
+  } catch (error) {
+    if (isSheetNotFoundError(error)) {
+      return [];
+    }
+    throw error;
   }
 }
 

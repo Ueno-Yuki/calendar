@@ -84,6 +84,7 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true); // 初回ロードのみ全画面オーバーレイ
   const [syncing, setSyncing] = useState(false); // 月切り替え時のヘッダースピナー
   const [authError, setAuthError] = useState(false);
+  const [eventsLoadError, setEventsLoadError] = useState('');
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   // 通知タップ時の /?date=YYYY-MM-DD パラメータで一度だけ消費する日付
@@ -251,6 +252,7 @@ export default function CalendarPage() {
     }
 
     if (!isRefreshTriggered && cacheRef.current[key]) {
+      setEventsLoadError('');
       setEvents(cacheRef.current[key]);
       if (pendingDateRef.current) {
         setSelectedDate(pendingDateRef.current);
@@ -274,6 +276,7 @@ export default function CalendarPage() {
       .then((data) => {
         if (cancelled) return;
         cacheRef.current[key] = data.events;
+        setEventsLoadError('');
         setEvents(data.events);
         if (pendingDateRef.current) {
           setSelectedDate(pendingDateRef.current);
@@ -296,6 +299,7 @@ export default function CalendarPage() {
           errorMessage,
         });
         if (err instanceof ApiAuthError) setAuthError(true);
+        setEventsLoadError('予定の読み込みに失敗しました');
         if (refreshRequest && refreshCompletionRef.current === refreshRequest) {
           refreshRequest.reject(new Error(errorMessage));
           refreshCompletionRef.current = null;
@@ -412,6 +416,7 @@ export default function CalendarPage() {
   const handleManualRefresh = useCallback(async () => {
     if (isRefreshBlockedRef.current || isRefreshing) return;
     setIsRefreshing(true);
+    setEventsLoadError('');
     setGoogleSyncMessage('');
     setGoogleSyncError('');
     try {
@@ -420,6 +425,7 @@ export default function CalendarPage() {
       if (latest !== undefined) setKnownLastUpdated(latest);
       setHasRemoteUpdates(false);
     } catch {
+      setEventsLoadError('予定の読み込みに失敗しました');
       setGoogleSyncError('予定の再取得に失敗しました');
     } finally {
       setIsRefreshing(false);
@@ -761,6 +767,12 @@ export default function CalendarPage() {
         onSettingsOpen={() => setShowSettings(true)}
         onYearMonthPress={() => setShowYearMonthPicker(true)}
       />
+      {eventsLoadError && (
+        <div className="border-b border-red-100 bg-red-50 px-4 py-2">
+          <p className="text-sm text-red-600">{eventsLoadError}</p>
+          <p className="mt-0.5 text-xs text-red-500">更新ボタンで再試行できます。</p>
+        </div>
+      )}
       {(googleSyncMessage || googleSyncError) && (
         <div className="pointer-events-none fixed left-1/2 top-14 z-30 -translate-x-1/2 px-4">
           <p
