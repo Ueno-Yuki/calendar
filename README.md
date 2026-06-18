@@ -1,235 +1,246 @@
-# 家族カレンダー
+# 家族カレンダー PWA
 
-家族4人（母・父・自分・弟）向けの共有カレンダーアプリ。
+スマートフォン利用を前提にした、家族向けの共有カレンダーアプリです。  
+見やすさ、入力の速さ、通知の実用性を優先して設計しています。
 
-Google Sheets をデータベースとして利用し、母のみ Google Calendar と双方向同期する。
-ログイン不要で、家族ごとの専用 URL でアクセスする。
-
----
-
-## 技術スタック
-
-| カテゴリ | 内容 |
-|---|---|
-| Frontend | Next.js 16.2.9 / TypeScript / Tailwind CSS v4 / Lucide React |
-| Backend | Next.js Route Handlers |
-| Database | Google Sheets |
-| 外部サービス | Google Sheets API / Google Calendar API / Google OAuth2 |
-| ホスティング | Vercel |
+このリポジトリは `Private` ですが、README は外部共有を想定した内容に整えています。  
+家族固有の運用情報、認証トークン、環境値、実データは含めていません。
 
 ---
 
-## 実装済み機能
+## Overview
 
-### 認証
-- 家族ごとの専用トークン URL によるログイン不要認証
-- Cookie による端末保持（以後は自動識別）
+家族内の予定共有を、できるだけ迷わず使える月間カレンダー体験に落とし込んだ PWA です。
 
-### カレンダー
-- 月間カレンダー表示（横スワイプで月移動）
-- 日別スケジュールモーダル（タイムテーブル形式）
-- 複数日予定の横展開・週またぎ分割表示
-- 日本の祝日表示（`@holiday-jp/holiday_jp`）
+- 月間カレンダーを中心にした単一画面構成
+- 予定作成、編集、削除
+- 複数日予定の表示
+- 家族ごとの色分け
+- Push 通知
+- Google Sheets をバックエンドとして利用
+- Google Calendar との選択的な同期
 
-### 予定管理
-- 予定作成（タイトル・日時・場所・メモ）
-- 予定削除（左スワイプ → 確認モーダル → 論理削除）
-- タイトル入力サジェスト（過去予定から候補表示・時間/場所/メモ自動入力）
-
-### UX
-- TimeTree 風入力 UI（ホイール時間選択）
-- iPhone / Android 対応・ズーム防止
-- Lucide アイコン
-
-### Google 連携（PR09 完了後に有効）
-- 母のみ Google Calendar 双方向同期
-- 初回 OAuth 認証完了時に本日以降の既存予定を一度だけ取り込み
-- 以後は 10 分キャッシュで定期同期
+想定ユーザーは非エンジニアを含む家庭内利用者で、PC よりもスマホ操作を優先しています。
 
 ---
 
-## ディレクトリ構成
+## What This Project Solves
 
+一般的なカレンダーアプリは機能が多い一方で、家族内の共有には操作が重くなりやすいです。  
+このアプリでは以下を重視しています。
+
+- ひと目で把握できる月間表示
+- 入力項目を絞った予定登録
+- 家族ごとの予定の識別しやすさ
+- 通知と同期の挙動を明示的に制御できること
+- API 障害時にも予定が消えたように見えにくいこと
+
+---
+
+## Key Features
+
+### Calendar UX
+
+- 月間カレンダー表示
+- 横スワイプで前月 / 翌月へ移動
+- 日別モーダルで予定一覧と編集導線を集約
+- 今日セルのハイライト
+- 祝日表示
+- 複数日予定バー表示
+
+### Event Management
+
+- 予定作成
+- 予定編集
+- 論理削除
+- タイトル候補サジェスト
+- TimeTree 風の時間選択 UI
+- 特定タイトルに応じた業務向け時刻入力拡張
+
+### Notifications
+
+- Web Push 通知
+- Daily Summary
+- お休みモード
+- 通知ログ記録
+
+### Google Integration
+
+- Google Calendar からの取り込み
+- アプリ予定の Google Calendar への逆同期
+- 同期対象の色 / カテゴリ制御
+- プレビュー付きの手動同期
+
+---
+
+## Technical Highlights
+
+### 1. Google Sheets をデータストアとして採用
+
+RDB ではなく Google Sheets を採用し、運用者が内容を直接確認できる構成にしています。  
+一方で、配列順依存による列ズレや API 一時失敗の扱いなど、運用系の課題が出やすいため、以下を実装しています。
+
+- ヘッダー名ベースの書き込み
+- 月別シート自動作成
+- 論理削除
+- 失敗時と「予定なし」の分離
+- 読み取りリトライ
+
+### 2. モバイル前提の状態管理
+
+月移動、Pull To Refresh、同期後再取得、通知経由の deep link など、複数の画面遷移経路があります。  
+そのため、単純な初回 fetch ではなく、以下のような設計を入れています。
+
+- in-memory cache
+- localStorage ベースの月別キャッシュ
+- 強制再取得と通常表示の分離
+- fetch 成功時のみ state / cache 更新
+
+### 3. Google 同期の安全性
+
+Google Calendar 取り込みは即時反映ではなく、プレビュー後に対象を選択して実行する設計です。
+
+- 取り込み候補のプレビュー
+- 色 / カテゴリによる対象制御
+- 既存予定との重複除外
+- 逆同期時の候補分類
+- Google 側と Sheets 側の反映順制御
+
+---
+
+## Architecture
+
+```text
+Google Calendar (optional, role-limited)
+        |
+Google Calendar API / OAuth2
+        |
+Next.js Route Handlers
+        |
+Google Sheets
+        |
+Next.js PWA
 ```
+
+---
+
+## Stack
+
+| Category | Tech |
+|---|---|
+| Frontend | Next.js 16 / TypeScript / Tailwind CSS v4 |
+| UI | Lucide React |
+| Backend | Next.js Route Handlers |
+| Data Store | Google Sheets |
+| External APIs | Google Sheets API / Google Calendar API / Web Push |
+| Hosting | Vercel |
+
+---
+
+## Reliability Notes
+
+このアプリでは、単に「取得できたら表示」ではなく、利用者視点で予定が消えたように見えないことを優先しています。
+
+現在の対策:
+
+- Sheets 読み取り失敗時に `予定なし` として扱わない
+- 月別ローカルキャッシュを先に表示
+- 裏で再取得し、成功時だけ差し替え
+- 更新ボタン / Pull To Refresh は force fetch
+- Google 同期失敗時の詳細ログ出力
+
+---
+
+## Directory Structure
+
+```text
 src/
   app/
-    api/          # Route Handlers（events / auth / sync）
-    family/[role] # 家族認証エントリーポイント
-    page.tsx      # 月間カレンダー（メイン画面）
+    api/              # Route Handlers
+    family/[role]/    # family-specific entry points
+    page.tsx          # main monthly calendar screen
   components/
-    calendar/     # CalendarGrid / CalendarCell / CalendarHeader 等
-    modal/        # DayModal / EventCreateForm
+    calendar/         # grid, rows, header
+    modal/            # day modal, event form, settings
   lib/
-    sheets.ts         # Google Sheets API クライアント
-    auth.ts           # トークン検証ユーティリティ
-    eventsDb.ts       # 予定 CRUD（Sheets 操作）
-    calendarUtils.ts  # 月間カレンダー計算ロジック
-    colors.ts         # 家族カラー定義
-    holidays.ts       # 祝日取得
-    apiClient.ts      # クライアント側 fetch ラッパー
+    sheets.ts         # Google Sheets access
+    googleCalendar.ts # Google Calendar client
+    googleCalendarSync.ts
+    eventsDb.ts
+    calendarUtils.ts
+    apiClient.ts
   types/
-    index.ts      # 型定義（Event / User / SyncMeta 等）
-docs/             # 仕様書・設計書
-tasks/            # 実装計画
+    index.ts
+docs/
+  00_project/
 ```
 
 ---
 
-## 環境変数
-
-`.env.local.example` をコピーして `.env.local` を作成する。
-
-```bash
-cp .env.local.example .env.local
-```
-
-| 変数名 | 説明 |
-|---|---|
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | サービスアカウントのメールアドレス |
-| `GOOGLE_PRIVATE_KEY` | サービスアカウントの秘密鍵（改行は `\n`） |
-| `GOOGLE_SPREADSHEET_ID` | Google Sheets のスプレッドシート ID |
-| `GOOGLE_OAUTH_CLIENT_ID` | OAuth2 クライアント ID（母の Google Calendar 連携用） |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | OAuth2 クライアントシークレット |
-| `GOOGLE_CALENDAR_ID_MOTHER` | 母の Google カレンダー ID（通常は Gmail アドレス） |
-| `GOOGLE_SYNC_COLOR_IDS_MOTHER` | 母Googleカレンダーから同期する Event.colorId（例: `7,9,10`、空なら全件同期） |
-| `VAPID_PUBLIC_KEY` | Web Push 用 VAPID 公開鍵 |
-| `VAPID_PRIVATE_KEY` | Web Push 用 VAPID 秘密鍵 |
-| `FAMILY_TOKEN_MOTHER` | 母の認証トークン（長いランダム文字列） |
-| `FAMILY_TOKEN_FATHER` | 父の認証トークン |
-| `FAMILY_TOKEN_ME` | 自分の認証トークン |
-| `FAMILY_TOKEN_BROTHER` | 弟の認証トークン |
-
-> **注意:** `GOOGLE_PRIVATE_KEY` の改行は `\n` リテラルで記述し、値全体をダブルクォートで囲む。
-> 母の Google Calendar の Refresh Token は初回 OAuth 認証後に `sync_meta` シートへ自動保存されるため、環境変数には不要。
-
----
-
-## Google Sheets 構成
-
-スプレッドシート内に以下のシートを手動で作成しておく。
-
-| シート名 | 役割 |
-|---|---|
-| `users` | 家族メンバー情報・通知設定 |
-| `sync_meta` | Google Calendar Refresh Token・同期状態フラグ（`mother_google_refresh_token` / `mother_google_import_completed` / `mother_google_calendar_last_synced_at`）|
-| `event_templates` | タイトルサジェスト用の過去予定テンプレート |
-| `push_subscriptions` | Web Push の Subscription 情報 |
-| `notification_logs` | Push 通知の送信ログ |
-| `YYYY-MM`（例: `2026-06`）| 月別の予定データ。予定登録時に自動作成される |
-
-月別シートのカラム構成：
-
-```
-id / owner / person / title / start_date / end_date / start_time / end_time
-/ location / memo / all_day / source / google_event_id
-/ created_at / updated_at / deleted
-```
-
----
-
-## ローカル開発
+## Local Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-`http://localhost:3000` でアプリが起動する。
+ローカル起動後:
 
-### 家族認証 URL
-
-各メンバーは以下の URL にアクセスしてアプリを開く。
-
-```
-http://localhost:3000/family/mother?token=<FAMILY_TOKEN_MOTHER の値>
-http://localhost:3000/family/father?token=<FAMILY_TOKEN_FATHER の値>
-http://localhost:3000/family/me?token=<FAMILY_TOKEN_ME の値>
-http://localhost:3000/family/brother?token=<FAMILY_TOKEN_BROTHER の値>
+```text
+http://localhost:3000
 ```
 
-初回アクセス時に Cookie へユーザー情報が保存され、2 回目以降は URL なしで自動識別される。
-
----
-
-## Google Cloud 設定
-
-### 有効化する API
-
-Google Cloud Console でプロジェクトを作成し、以下の API を有効化する。
-
-- Google Sheets API
-- Google Calendar API
-
-### サービスアカウント設定（Sheets 用）
-
-1. IAM と管理 → サービスアカウント → 作成
-2. キーを JSON 形式で発行
-3. `client_email` → `GOOGLE_SERVICE_ACCOUNT_EMAIL`
-4. `private_key` → `GOOGLE_PRIVATE_KEY`（改行を `\n` に置換）
-5. Google Sheets を開き、サービスアカウントのメールアドレスを「編集者」として共有
-
-### OAuth2 設定（Google Calendar 連携用）
-
-1. API とサービス → OAuth 同意画面 → 外部（テスト用は内部でも可）
-2. スコープに `https://www.googleapis.com/auth/calendar` を追加
-3. テストユーザーに母の Gmail を追加
-4. 認証情報 → OAuth 2.0 クライアント ID を作成
-   - アプリケーションの種類: ウェブアプリケーション
-   - 承認済みのリダイレクト URI: `https://your-domain.vercel.app/api/auth/google/callback`（ローカルは `http://localhost:3000/api/auth/google/callback`）
-5. クライアント ID → `GOOGLE_OAUTH_CLIENT_ID`
-6. クライアントシークレット → `GOOGLE_OAUTH_CLIENT_SECRET`
-
-### 母の初回 Google 認証
-
-以下の URL にアクセスして母のアカウントで Google 認証を行う（初回のみ）。
-
-```
-https://your-domain.vercel.app/api/auth/google
-```
-
-認証完了後、Refresh Token が `sync_meta` シートに自動保存され、以後は自動同期が有効になる。
-
----
-
-## Vercel デプロイ
-
-### 環境変数の設定
-
-Vercel ダッシュボード → プロジェクト → Settings → Environment Variables に `.env.local` の全変数を登録する。
-
-> `GOOGLE_PRIVATE_KEY` は改行を含む値のため、Vercel の環境変数入力欄に貼り付ける際は `\n` リテラルのままで問題ない（Vercel が自動解釈する）。
-
-### デプロイ
+このアプリは family-specific URL による識別を前提にしています。  
+必要な環境変数は `.env.local.example` を参照してください。
 
 ```bash
-# Vercel CLI を使う場合
-npx vercel --prod
-
-# または GitHub 連携で main ブランチへの push で自動デプロイ
+cp .env.local.example .env.local
 ```
 
-### カスタムドメイン設定
+---
 
-1. Vercel ダッシュボード → プロジェクト → Settings → Domains
-2. 取得済みドメインを追加
-3. DNS に CNAME または A レコードを設定
-4. Google Cloud Console の OAuth リダイレクト URI にカスタムドメインを追加
+## Environment Notes
+
+このプロジェクトは以下のカテゴリの設定を利用します。
+
+- Google Sheets API credentials
+- Google OAuth credentials
+- Google Calendar target settings
+- Web Push VAPID keys
+- family-specific access tokens
+
+実値は README には記載していません。  
+Private repository 内でも、秘密情報は `.env.local` / Vercel Environment Variables で管理してください。
 
 ---
 
-## 今後の実装予定
+## Product Constraints
 
-| PR | 内容 |
-|---|---|
-| PR10 | PWA 対応・Service Worker 基盤・Push Subscription |
-| PR11 | 通知設定モーダル（通知全体・予定追加・予定削除・デイリー通知の ON/OFF） |
-| PR12 | 即時 Push 通知（予定追加・削除時に家族へ通知） |
-| PR13 | 今日の予定通知（Vercel Cron による Daily Summary） |
+このアプリは MVP として、以下を意図的にスコープ外にしています。
 
-詳細は `tasks/implementation-plan.md` を参照。
+- 汎用的なユーザー管理
+- 複数グループ対応
+- 検索
+- CSV 出力
+- LINE 連携
+- 高度な権限制御
+
+詳細仕様は [docs/00_project/mvp-final-specification.md](/Users/yukiueno/project/calendar/docs/00_project/mvp-final-specification.md) を参照してください。
 
 ---
 
-## ライセンス
+## Portfolio Use
 
-Private Project
+この README は、そのまま外部向けのケーススタディ原稿として使えるように整えています。  
+ただし、リポジトリ自体が Private のため、外部公開するには別の導線が必要です。
+
+実務上は次のどちらかが適切です。
+
+1. この README をベースに、公開用のポートフォリオページを別に作る
+2. 機密情報を除いた public mirror / case study repo を別途作る
+
+---
+
+## Status
+
+Active private project.
