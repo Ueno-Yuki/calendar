@@ -7,20 +7,21 @@ interface Props {
   chips: PersonDayChip[];
   isToday?: boolean;
   onPress: () => void;
+  contentOffsetTop?: number;
 }
 
-export default function CalendarCell({ chips, isToday, onPress }: Props) {
+export default function CalendarCell({ chips, isToday, onPress, contentOffsetTop = 0 }: Props) {
   return (
     <button
       type="button"
       onClick={onPress}
-      className={`flex flex-col items-start w-full h-full p-0.5 overflow-hidden focus:outline-none ${isToday ? 'bg-slate-100' : ''}`}
+      className={`relative flex flex-col items-start w-full h-full p-0.5 overflow-hidden focus:outline-none ${isToday ? 'bg-slate-100' : ''}`}
     >
-      <div className="flex flex-col gap-px w-full overflow-hidden">
+      <div className="flex flex-col gap-px w-full overflow-hidden" style={{ marginTop: contentOffsetTop }}>
         {chips.map((chip) => {
           const color = FAMILY_COLORS[chip.person];
-          const isAllDay = chip.primaryEvent.all_day;
-          if (isAllDay) {
+          const isAllDayLike = chip.primaryEvent.all_day || !chip.primaryEvent.start_time;
+          if (isAllDayLike) {
             // 終日予定: 対象者カラー背景 + 白文字
             return (
               <div

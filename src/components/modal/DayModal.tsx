@@ -68,14 +68,18 @@ export default function DayModal({
   );
 
   const allDaySection = dayEvents.filter(
-    (e) => e.all_day || (e.start_date !== e.end_date && e.start_date !== dateStr),
-  );
+    (e) => e.all_day || !e.start_time || (e.start_date !== e.end_date && e.start_date !== dateStr),
+  ).sort((a, b) => a.created_at.localeCompare(b.created_at));
 
   const timedSection = useMemo(
     () =>
       dayEvents
-        .filter((e) => !e.all_day && (e.start_date === e.end_date || e.start_date === dateStr))
-        .sort((a, b) => a.start_time.localeCompare(b.start_time)),
+        .filter((e) => !e.all_day && !!e.start_time && (e.start_date === e.end_date || e.start_date === dateStr))
+        .sort((a, b) => {
+          const startTimeCompare = a.start_time.localeCompare(b.start_time);
+          if (startTimeCompare !== 0) return startTimeCompare;
+          return a.created_at.localeCompare(b.created_at);
+        }),
     [dayEvents, dateStr],
   );
 

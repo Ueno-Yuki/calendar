@@ -13,8 +13,7 @@ interface Props {
 }
 
 export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
-  const { days, multiDayBars, totalBarRows, dayChips } = weekData;
-  const barSectionHeight = totalBarRows * (BAR_HEIGHT + BAR_GAP);
+  const { days, multiDayBars, dayChips, barRowsByDate } = weekData;
   const todayCol = days.findIndex((d) => d.isToday);
 
   return (
@@ -58,70 +57,66 @@ export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
         })}
       </div>
 
-      {/* 段2: 複数日予定バー — 日付行の直下 */}
-      {totalBarRows > 0 && (
-        <div className="relative shrink-0" style={{ height: barSectionHeight }}>
-          {/* 今日列の背景 (バーより前に描画してz-indexで後ろに) */}
-          {todayCol >= 0 && (
-            <div
-              className="absolute inset-y-0 bg-slate-100"
-              style={{
-                left: `${(todayCol / 7) * 100}%`,
-                width: `${(1 / 7) * 100}%`,
-              }}
-            />
-          )}
-          <div className="absolute inset-0 grid grid-cols-7 divide-x divide-zinc-100 pointer-events-none">
-            {days.map((day) => (
-              <div key={day.dateStr} />
-            ))}
-          </div>
-          {multiDayBars.map((bar, i) => {
-            const leftPct = `${(bar.startCol / 7) * 100}%`;
-            const widthPct = `${((bar.endCol - bar.startCol + 1) / 7) * 100}%`;
-            const top = bar.barRow * (BAR_HEIGHT + BAR_GAP);
-            const color = FAMILY_COLORS[bar.event.person];
-            const isStart =
-              bar.startCol === days.findIndex((d) => d.dateStr === bar.event.start_date);
-            const isEnd =
-              bar.endCol === days.findIndex((d) => d.dateStr === bar.event.end_date);
-            return (
-              <button
-                key={`${bar.event.id}-${i}`}
-                type="button"
-                onClick={() => onDayPress(days[bar.startCol]?.dateStr ?? bar.event.start_date)}
-                style={{
-                  position: 'absolute',
-                  left: leftPct,
-                  width: widthPct,
-                  top,
-                  height: BAR_HEIGHT,
-                  backgroundColor: color.main,
-                  borderRadius: `${isStart ? 4 : 0}px ${isEnd ? 4 : 0}px ${isEnd ? 4 : 0}px ${isStart ? 4 : 0}px`,
-                  paddingLeft: isStart ? 4 : 2,
-                  paddingRight: 2,
-                }}
-                className="flex items-center overflow-hidden focus:outline-none"
-              >
-                <span className="text-white text-[10px] truncate leading-none">
-                  {bar.event.title}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* 段3: 単日予定チップ行 — 複数日予定は含まない（バーで表示済み） */}
-      <div className="grid grid-cols-7 divide-x divide-zinc-100 flex-1 min-h-0">
-        {days.map((day) => (
-          <CalendarCell
-            key={day.dateStr}
-            chips={dayChips.get(day.dateStr) ?? []}
-            isToday={day.isToday}
-            onPress={() => onDayPress(day.dateStr)}
+      {/* 段2: 複数日バーと単日予定を同じ領域で管理し、バーがない列は上に詰める */}
+      <div className="relative flex-1 min-h-0">
+        {todayCol >= 0 && (
+          <div
+            className="absolute inset-y-0 bg-slate-100 z-0"
+            style={{
+              left: `${(todayCol / 7) * 100}%`,
+              width: `${(1 / 7) * 100}%`,
+            }}
           />
-        ))}
+        )}
+        <div className="absolute inset-0 grid grid-cols-7 divide-x divide-zinc-100 pointer-events-none z-10">
+          {days.map((day) => (
+            <div key={day.dateStr} />
+          ))}
+        </div>
+        <div className="grid grid-cols-7 h-full relative z-20">
+          {days.map((day) => (
+            <CalendarCell
+              key={day.dateStr}
+              chips={dayChips.get(day.dateStr) ?? []}
+              isToday={day.isToday}
+              contentOffsetTop={(barRowsByDate.get(day.dateStr) ?? 0) * (BAR_HEIGHT + BAR_GAP)}
+              onPress={() => onDayPress(day.dateStr)}
+            />
+          ))}
+        </div>
+        {multiDayBars.map((bar, i) => {
+          const leftPct = `${(bar.startCol / 7) * 100}%`;
+          const widthPct = `${((bar.endCol - bar.startCol + 1) / 7) * 100}%`;
+          const top = bar.barRow * (BAR_HEIGHT + BAR_GAP);
+          const color = FAMILY_COLORS[bar.event.person];
+          const isStart =
+            bar.startCol === days.findIndex((d) => d.dateStr === bar.event.start_date);
+          const isEnd =
+            bar.endCol === days.findIndex((d) => d.dateStr === bar.event.end_date);
+          return (
+            <button
+              key={`${bar.event.id}-${i}`}
+              type="button"
+              onClick={() => onDayPress(days[bar.startCol]?.dateStr ?? bar.event.start_date)}
+              style={{
+                position: 'absolute',
+                left: leftPct,
+                width: widthPct,
+                top,
+                height: BAR_HEIGHT,
+                backgroundColor: color.main,
+                borderRadius: `${isStart ? 4 : 0}px ${isEnd ? 4 : 0}px ${isEnd ? 4 : 0}px ${isStart ? 4 : 0}px`,
+                paddingLeft: isStart ? 4 : 2,
+                paddingRight: 2,
+              }}
+              className="z-30 flex items-center overflow-hidden focus:outline-none"
+            >
+              <span className="text-white text-[10px] truncate leading-none">
+                {bar.event.title}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
     </div>

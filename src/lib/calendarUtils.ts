@@ -27,6 +27,7 @@ export interface WeekData {
   multiDayBars: MultiDayBar[];
   totalBarRows: number;
   dayChips: Map<string, PersonDayChip[]>;
+  barRowsByDate: Map<string, number>;
 }
 
 export function toDateStr(date: Date): string {
@@ -65,11 +66,16 @@ function getPersonDayChips(dateStr: string, events: Event[]): PersonDayChip[] {
     );
     if (dayEvents.length === 0) continue;
 
-    // multi-day events first, then by created_at ASC
+    // 月間セルでは、終日相当を先頭にし、その後は開始時刻昇順にする。
     dayEvents.sort((a, b) => {
-      const aIsMulti = a.start_date !== a.end_date ? 0 : 1;
-      const bIsMulti = b.start_date !== b.end_date ? 0 : 1;
-      if (aIsMulti !== bIsMulti) return aIsMulti - bIsMulti;
+      const aIsAllDayLike = a.all_day || !a.start_time ? 0 : 1;
+      const bIsAllDayLike = b.all_day || !b.start_time ? 0 : 1;
+      if (aIsAllDayLike !== bIsAllDayLike) return aIsAllDayLike - bIsAllDayLike;
+      if (aIsAllDayLike === 0 && bIsAllDayLike === 0) {
+        return a.created_at.localeCompare(b.created_at);
+      }
+      const startTimeCompare = a.start_time.localeCompare(b.start_time);
+      if (startTimeCompare !== 0) return startTimeCompare;
       return a.created_at.localeCompare(b.created_at);
     });
 
@@ -124,13 +130,23 @@ export function buildCalendarWeeks(
 
     const multiDayBars = assignBarRows(barsWithoutRow);
     const totalBarRows = multiDayBars.length > 0 ? Math.max(...multiDayBars.map((b) => b.barRow)) + 1 : 0;
+    const barRowsByDate = new Map<string, number>();
+    days.forEach((day, colIndex) => {
+      const occupiedRows = multiDayBars.reduce((max, bar) => {
+        if (bar.startCol <= colIndex && bar.endCol >= colIndex) {
+          return Math.max(max, bar.barRow + 1);
+        }
+        return max;
+      }, 0);
+      barRowsByDate.set(day.dateStr, occupiedRows);
+    });
 
     const dayChips = new Map<string, PersonDayChip[]>();
     for (const day of days) {
       dayChips.set(day.dateStr, getPersonDayChips(day.dateStr, events));
     }
 
-    weeks.push({ days, multiDayBars, totalBarRows, dayChips });
+    weeks.push({ days, multiDayBars, totalBarRows, dayChips, barRowsByDate });
   }
 
   return weeks;
