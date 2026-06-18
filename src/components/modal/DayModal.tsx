@@ -11,8 +11,9 @@ import { apiFetch } from '@/lib/apiClient';
 import EventCreateForm from './EventCreateForm';
 import DeleteConfirmModal from './DeleteConfirmModal';
 
-const DOW = ['日', '月', '火', '水', '木', '金', '土'];
+const DOW_FULL = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'];
 const ACTION_BTN_WIDTH = 72; // px — 削除・編集ボタンの幅
+const CLOSE_SWIPE_THRESHOLD = 80;
 
 interface Props {
   dateStr: string;
@@ -48,7 +49,14 @@ export default function DayModal({
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
   const [eventToEdit, setEventToEdit] = useState<Event | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [dragOffsetY, setDragOffsetY] = useState(0);
   const currentRole = readCurrentRole();
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const closeTouchStartXRef = useRef<number | null>(null);
+  const closeTouchStartYRef = useRef<number | null>(null);
+  const closeGestureEnabledRef = useRef(false);
+  const dragOffsetYRef = useRef(0);
 
   const isRefreshBlocked = mode === 'create' || mode === 'edit' || eventToDelete !== null;
 
@@ -60,27 +68,43 @@ export default function DayModal({
   const date = new Date(`${dateStr}T00:00:00`);
   const dow = date.getDay();
   const dowColorClass = dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-zinc-900';
-  const heading = `${date.getMonth() + 1}月${date.getDate()}日（${DOW[dow]}）`;
+  const heading = `${date.getMonth() + 1}月${date.getDate()}日 ${DOW_FULL[dow]}`;
 
   const dayEvents = useMemo(
     () => events.filter((e) => !e.deleted && e.start_date <= dateStr && e.end_date >= dateStr),
     [events, dateStr],
   );
 
-  const allDaySection = dayEvents.filter(
-    (e) => e.all_day || !e.start_time || (e.start_date !== e.end_date && e.start_date !== dateStr),
-  ).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const allDaySection = useMemo(
+    () =>
+      dayEvents
+        .filter((e) => e.start_date === e.end_date && (e.all_day || !e.start_time))
+        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    [dayEvents],
+  );
+
+  const multiDaySection = useMemo(
+    () =>
+      dayEvents
+        .filter((e) => e.start_date !== e.end_date)
+        .sort((a, b) => {
+          const startDateCompare = a.start_date.localeCompare(b.start_date);
+          if (startDateCompare !== 0) return startDateCompare;
+          return a.created_at.localeCompare(b.created_at);
+        }),
+    [dayEvents],
+  );
 
   const timedSection = useMemo(
     () =>
       dayEvents
-        .filter((e) => !e.all_day && !!e.start_time && (e.start_date === e.end_date || e.start_date === dateStr))
+        .filter((e) => e.start_date === e.end_date && !e.all_day && !!e.start_time)
         .sort((a, b) => {
           const startTimeCompare = a.start_time.localeCompare(b.start_time);
           if (startTimeCompare !== 0) return startTimeCompare;
           return a.created_at.localeCompare(b.created_at);
         }),
-    [dayEvents, dateStr],
+    [dayEvents],
   );
 
   // 新規作成保存後
@@ -151,18 +175,81 @@ export default function DayModal({
 
   const backdropClickable = mode === 'schedule' && eventToDelete === null;
 
-  const containerHeight = mode === 'schedule' ? 'max-h-[90dvh]' : 'h-[90dvh]';
+  const resetCloseGesture = () => {
+    closeTouchStartXRef.current = null;
+    closeTouchStartYRef.current = null;
+    closeGestureEnabledRef.current = false;
+    dragOffsetYRef.current = 0;
+    setDragOffsetY(0);
+  };
+
+  const handleSheetTouchStart = (e: React.TouchEvent) => {
+    if (mode !== 'schedule' || eventToDelete !== null) return;
+    const target = e.target as Node;
+    const startedInHeader = headerRef.current?.contains(target) ?? false;
+    const canStartFromList = (listRef.current?.scrollTop ?? 0) <= 0;
+
+    closeGestureEnabledRef.current = startedInHeader || canStartFromList;
+    if (!closeGestureEnabledRef.current) return;
+
+    closeTouchStartXRef.current = e.touches[0].clientX;
+    closeTouchStartYRef.current = e.touches[0].clientY;
+  };
+
+  const handleSheetTouchMove = (e: React.TouchEvent) => {
+    if (!closeGestureEnabledRef.current) return;
+    if (closeTouchStartXRef.current === null || closeTouchStartYRef.current === null) return;
+
+    const dx = e.touches[0].clientX - closeTouchStartXRef.current;
+    const dy = e.touches[0].clientY - closeTouchStartYRef.current;
+
+    if (dy <= 0 || Math.abs(dy) <= Math.abs(dx)) {
+      dragOffsetYRef.current = 0;
+      setDragOffsetY(0);
+      return;
+    }
+
+    dragOffsetYRef.current = Math.min(dy, 160);
+    setDragOffsetY(dragOffsetYRef.current);
+  };
+
+  const handleSheetTouchEnd = () => {
+    if (!closeGestureEnabledRef.current) {
+      dragOffsetYRef.current = 0;
+      setDragOffsetY(0);
+      return;
+    }
+
+    if (dragOffsetYRef.current > CLOSE_SWIPE_THRESHOLD) {
+      resetCloseGesture();
+      onClose();
+      return;
+    }
+
+    resetCloseGesture();
+  };
 
   return (
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/40 z-40"
+        className="fixed inset-0 z-40 bg-black/20"
         onClick={backdropClickable ? onClose : undefined}
         aria-hidden="true"
       />
 
-      <div className={`fixed inset-x-0 bottom-0 z-50 flex flex-col bg-white rounded-t-2xl ${containerHeight}`}>
+      <div
+        className="fixed inset-x-0 bottom-0 z-50 flex flex-col overflow-hidden rounded-t-[24px] bg-white shadow-[0_-12px_32px_rgba(15,23,42,0.16)]"
+        style={{
+          top: 'max(80px, env(safe-area-inset-top))',
+          transform: `translateY(${dragOffsetY}px)`,
+          transition: dragOffsetY > 0 ? 'none' : 'transform 0.22s ease-out',
+        }}
+        onTouchStart={handleSheetTouchStart}
+        onTouchMove={handleSheetTouchMove}
+        onTouchEnd={handleSheetTouchEnd}
+        onTouchCancel={resetCloseGesture}
+      >
         {mode === 'create' ? (
           <EventCreateForm
             dateStr={dateStr}
@@ -179,78 +266,115 @@ export default function DayModal({
           />
         ) : (
           <>
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 shrink-0">
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="閉じる"
-                className="p-1 text-zinc-400 hover:text-zinc-600"
-              >
-                <X size={20} strokeWidth={2.5} />
-              </button>
-              <h2 className={`text-base font-semibold ${dowColorClass}`}>{heading}</h2>
-              <button
-                type="button"
-                onClick={() => { setSwipedEventId(null); setMode('create'); }}
-                aria-label="予定を追加"
-                className="p-1 text-zinc-600 hover:text-zinc-900"
-              >
-                <Plus size={22} strokeWidth={2.5} />
-              </button>
+            <div ref={headerRef} className="shrink-0 border-b border-zinc-100 px-5 pb-3 pt-2">
+              <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-zinc-200" aria-hidden="true" />
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-zinc-400">予定一覧</p>
+                  <h2 className={`mt-1 text-[28px] font-semibold leading-tight ${dowColorClass}`}>
+                    {heading}
+                  </h2>
+                </div>
+                <div className="flex items-center gap-1 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => { setSwipedEventId(null); setMode('create'); }}
+                    aria-label="予定を追加"
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900"
+                  >
+                    <Plus size={20} strokeWidth={2.5} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    aria-label="閉じる"
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
+                  >
+                    <X size={20} strokeWidth={2.5} />
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Event list */}
-            <div className="overflow-y-auto pb-8">
+            <div ref={listRef} className="flex-1 overflow-y-auto pb-10">
               {dayEvents.length === 0 ? (
-                <div className="px-4 py-10 text-center">
-                  <p className="text-sm text-zinc-400">予定はありません</p>
+                <div className="flex min-h-full items-center justify-center px-6 py-12 text-center">
+                  <p className="text-sm text-zinc-400">予定がありません</p>
                 </div>
               ) : (
-                <>
-                  {allDaySection.length > 0 && (
-                    <div className="px-4 pt-3 pb-3 border-b border-zinc-100">
-                      <p className="text-[10px] font-medium text-zinc-400 mb-2">終日・複数日</p>
-                      <div className="flex flex-col gap-2">
-                        {allDaySection.map((e) => (
-                          <SwipeableEventCard
-                            key={e.id}
-                            event={e}
-                            showTime={false}
-                            isSwiped={swipedEventId === e.id}
-                            swipeDir={swipedEventId === e.id ? swipedDirection : 'left'}
-                            canAction={canAction(e)}
-                            onSwipeLeft={() => handleSwipeLeft(e.id)}
-                            onSwipeRight={() => handleSwipeRight(e.id)}
-                            onCloseSwipe={() => setSwipedEventId(null)}
-                            onDeleteRequest={handleDeleteRequest}
-                            onEditRequest={handleEditRequest}
-                          />
-                        ))}
+                <div className="px-4 pb-6 pt-4">
+                  <div className="flex flex-col gap-4">
+                    {allDaySection.length > 0 && (
+                      <div>
+                        <p className="mb-2 text-[11px] font-medium tracking-[0.02em] text-zinc-400">終日</p>
+                        <div className="flex flex-col gap-2">
+                          {allDaySection.map((e) => (
+                            <SwipeableEventCard
+                              key={e.id}
+                              event={e}
+                              showTime={false}
+                              isSwiped={swipedEventId === e.id}
+                              swipeDir={swipedEventId === e.id ? swipedDirection : 'left'}
+                              canAction={canAction(e)}
+                              onSwipeLeft={() => handleSwipeLeft(e.id)}
+                              onSwipeRight={() => handleSwipeRight(e.id)}
+                              onCloseSwipe={() => setSwipedEventId(null)}
+                              onDeleteRequest={handleDeleteRequest}
+                              onEditRequest={handleEditRequest}
+                            />
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {timedSection.length > 0 && (
-                    <div className="px-4 pt-3 pb-1 flex flex-col gap-2">
-                      {timedSection.map((e) => (
-                        <SwipeableEventCard
-                          key={e.id}
-                          event={e}
-                          showTime
-                          isSwiped={swipedEventId === e.id}
-                          swipeDir={swipedEventId === e.id ? swipedDirection : 'left'}
-                          canAction={canAction(e)}
-                          onSwipeLeft={() => handleSwipeLeft(e.id)}
-                          onSwipeRight={() => handleSwipeRight(e.id)}
-                          onCloseSwipe={() => setSwipedEventId(null)}
-                          onDeleteRequest={handleDeleteRequest}
-                          onEditRequest={handleEditRequest}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </>
+                    {multiDaySection.length > 0 && (
+                      <div>
+                        <p className="mb-2 text-[11px] font-medium tracking-[0.02em] text-zinc-400">複数日</p>
+                        <div className="flex flex-col gap-2">
+                          {multiDaySection.map((e) => (
+                            <SwipeableEventCard
+                              key={e.id}
+                              event={e}
+                              showTime={false}
+                              isSwiped={swipedEventId === e.id}
+                              swipeDir={swipedEventId === e.id ? swipedDirection : 'left'}
+                              canAction={canAction(e)}
+                              onSwipeLeft={() => handleSwipeLeft(e.id)}
+                              onSwipeRight={() => handleSwipeRight(e.id)}
+                              onCloseSwipe={() => setSwipedEventId(null)}
+                              onDeleteRequest={handleDeleteRequest}
+                              onEditRequest={handleEditRequest}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {timedSection.length > 0 && (
+                      <div>
+                        <p className="mb-2 text-[11px] font-medium tracking-[0.02em] text-zinc-400">時間指定</p>
+                        <div className="flex flex-col gap-2">
+                          {timedSection.map((e) => (
+                            <SwipeableEventCard
+                              key={e.id}
+                              event={e}
+                              showTime
+                              isSwiped={swipedEventId === e.id}
+                              swipeDir={swipedEventId === e.id ? swipedDirection : 'left'}
+                              canAction={canAction(e)}
+                              onSwipeLeft={() => handleSwipeLeft(e.id)}
+                              onSwipeRight={() => handleSwipeRight(e.id)}
+                              onCloseSwipe={() => setSwipedEventId(null)}
+                              onDeleteRequest={handleDeleteRequest}
+                              onEditRequest={handleEditRequest}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           </>

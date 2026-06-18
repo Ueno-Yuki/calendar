@@ -855,7 +855,7 @@ export default function CalendarPage() {
         onPrevMonth={goPrevMonth}
         onNextMonth={goNextMonth}
         onRefresh={handleManualRefresh}
-        refreshDisabled={isRefreshBlocked || isRefreshing}
+        refreshDisabled={isRefreshBlocked || isRefreshing || selectedDate !== null}
         onDayPress={(dateStr) => setSelectedDate(dateStr)}
       />
       {selectedDate && (
