@@ -95,6 +95,7 @@ export default function EventCreateForm({
   const [submitting, setSubmitting] = useState(false);
   const [suggestions, setSuggestions] = useState<EventTemplate[]>([]);
   const [suppressSuggestions, setSuppressSuggestions] = useState(false);
+  const [hasTitleUserEdited, setHasTitleUserEdited] = useState(false);
 
   // どの時刻ピッカーを開いているか
   const [timePickerFor, setTimePickerFor] = useState<'start' | 'end' | null>(null);
@@ -104,6 +105,7 @@ export default function EventCreateForm({
   const effectiveIsLast = showLastOption && isLast;
 
   useEffect(() => {
+    if (!hasTitleUserEdited) return;
     if (suppressSuggestions) return;
     const query = title.trim();
     if (!query) return;
@@ -118,7 +120,7 @@ export default function EventCreateForm({
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [title, currentRole, suppressSuggestions]);
+  }, [title, currentRole, suppressSuggestions, hasTitleUserEdited]);
 
   useEffect(() => {
     if (!currentRole) return;
@@ -289,6 +291,7 @@ export default function EventCreateForm({
             value={title}
             onChange={(e) => {
               if (!e.target.value.trim()) setSuggestions([]);
+              setHasTitleUserEdited(true);
               setSuppressSuggestions(false);
               setTitle(e.target.value);
             }}
@@ -296,7 +299,7 @@ export default function EventCreateForm({
             style={{ fontSize: 22 }}
             className="w-full font-semibold text-zinc-900 placeholder-zinc-400 bg-transparent focus:outline-none"
           />
-          {showSuggestions && (
+          {hasTitleUserEdited && showSuggestions && !suppressSuggestions && (
             <div className="absolute z-10 left-4 right-4 top-full mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
               {suggestions.map((s) => {
                 const displayEnd = s.end_time
