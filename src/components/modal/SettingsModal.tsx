@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { X, Bell, BellOff } from 'lucide-react';
 import { apiFetch } from '@/lib/apiClient';
 import { STORAGE_KEY } from '@/lib/auth';
@@ -19,14 +19,6 @@ interface NotificationSettings {
   quiet_hours_start: string;
   quiet_hours_end: string;
 }
-
-const DEFAULT_SETTINGS: NotificationSettings = {
-  notification_enabled: true,
-  daily_summary_enabled: true,
-  instant_event_created_enabled: true,
-  instant_event_deleted_enabled: true,
-  ...DEFAULT_QUIET_HOURS,
-};
 
 type BooleanSettingKey =
   | 'notification_enabled'
@@ -54,6 +46,21 @@ function buildTimeValue(hour: string, minute: string): string | null {
 
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => pad2(hour));
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => pad2(minute));
+
+async function requestNotificationSettings(): Promise<NotificationSettings> {
+  const res = await apiFetch('/api/settings/notifications');
+  if (!res.ok) throw new Error('load_failed');
+  return (await res.json()) as NotificationSettings;
+}
+
+async function persistNotificationSettings(next: NotificationSettings): Promise<NotificationSettings> {
+  const res = await apiFetch('/api/settings/notifications', {
+    method: 'PUT',
+    body: JSON.stringify(next),
+  });
+  if (!res.ok) throw new Error('save_failed');
+  return (await res.json()) as NotificationSettings;
+}
 
 function readCurrentRole(): FamilyRole | null {
   if (typeof window === 'undefined') return null;
@@ -101,37 +108,59 @@ interface Props {
 
 export default function SettingsModal({ onClose }: Props) {
   const role = readCurrentRole();
-  const [settings, setSettings] = useState<NotificationSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<NotificationSettings | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() => getNotificationPermission());
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [justGranted, setJustGranted] = useState(false);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [saveError, setSaveError] = useState('');
 
-  useEffect(() => {
+  const loadSettings = useCallback(async () => {
     if (!role) return;
-    apiFetch('/api/settings/notifications')
-      .then((res) => (res.ok ? (res.json() as Promise<NotificationSettings>) : null))
-      .then((data) => {
-        if (data) setSettings(data);
-      })
-      .catch(() => {});
-
+    setIsLoadingSettings(true);
+    setLoadError('');
+    try {
+      const data = await requestNotificationSettings();
+      setSettings(data);
+    } catch {
+      setSettings(null);
+      setLoadError('設定の読み込みに失敗しました');
+    } finally {
+      setIsLoadingSettings(false);
+    }
   }, [role]);
 
-  const saveSettings = (next: NotificationSettings) => {
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadSettings();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadSettings]);
+
+  const saveSettings = async (next: NotificationSettings) => {
+    const previous = settings;
+    if (!previous) return;
+    setSaveError('');
     setSettings(next);
-    apiFetch('/api/settings/notifications', {
-      method: 'PUT',
-      body: JSON.stringify(next),
-    }).catch(() => {});
+    try {
+      const saved = await persistNotificationSettings(next);
+      setSettings(saved);
+    } catch {
+      setSettings(previous);
+      setSaveError('設定の保存に失敗しました');
+    }
   };
 
   const handleToggle = (key: BooleanSettingKey) => {
-    saveSettings({ ...settings, [key]: !settings[key] });
+    if (!settings) return;
+    void saveSettings({ ...settings, [key]: !settings[key] });
   };
 
   const handleTimeChange = (key: TimeSettingKey, value: string) => {
+    if (!settings) return;
     if (!isValidTime(value)) return;
-    saveSettings({ ...settings, [key]: value });
+    void saveSettings({ ...settings, [key]: value });
   };
 
   const handleRequestPermission = async () => {
@@ -142,16 +171,17 @@ export default function SettingsModal({ onClose }: Props) {
       setPermission(result);
       if (result === 'granted') {
         await subscribePush().catch(() => {});
-        // 通知設定をONにする（デフォルト値だが明示的に保存）
-        apiFetch('/api/settings/notifications', {
-          method: 'PUT',
-          body: JSON.stringify({
+        if (settings) {
+          await saveSettings({
+            ...settings,
             notification_enabled: true,
             daily_summary_enabled: true,
             instant_event_created_enabled: true,
             instant_event_deleted_enabled: true,
-          }),
-        }).catch(() => {});
+          });
+        } else {
+          await loadSettings().catch(() => {});
+        }
         setJustGranted(true);
       }
     } catch {
@@ -298,103 +328,133 @@ export default function SettingsModal({ onClose }: Props) {
               通知設定
             </p>
 
-            <div className="rounded-xl border border-zinc-100 overflow-hidden bg-zinc-50">
-
-              {/* マスタースイッチ */}
-              <div className="flex items-center justify-between px-4 py-3.5 bg-white">
-                <span className="text-sm font-medium text-zinc-800">通知を受け取る</span>
-                <Toggle
-                  checked={settings.notification_enabled}
-                  onChange={() => handleToggle('notification_enabled')}
-                />
+            {(loadError || saveError) && (
+              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
+                {loadError && <p className="text-sm text-red-600">{loadError}</p>}
+                {saveError && <p className="text-sm text-red-600">{saveError}</p>}
+                {loadError && (
+                  <button
+                    type="button"
+                    onClick={() => void loadSettings()}
+                    className="mt-2 text-xs font-medium text-red-600 underline underline-offset-2"
+                  >
+                    再読み込み
+                  </button>
+                )}
               </div>
+            )}
 
-              <div className="h-px bg-zinc-100" />
+            {isLoadingSettings && !settings && (
+              <div className="mb-3 rounded-xl bg-zinc-50 px-3 py-3 text-sm text-zinc-500">
+                設定を読み込み中です…
+              </div>
+            )}
 
-              {/* 今日の予定通知 */}
-              <div className="flex items-center justify-between px-4 py-3.5">
-                <div>
-                  <p className={`text-sm ${settings.notification_enabled ? 'text-zinc-700' : 'text-zinc-400'}`}>
-                    今日の予定通知
-                  </p>
-                  <p className="text-xs text-zinc-400 mt-0.5">毎朝6時にお知らせ</p>
+            {!isLoadingSettings && !settings ? null : settings && (
+              <>
+                <div className="rounded-xl border border-zinc-100 overflow-hidden bg-zinc-50">
+
+                  {/* マスタースイッチ */}
+                  <div className="flex items-center justify-between px-4 py-3.5 bg-white">
+                    <span className="text-sm font-medium text-zinc-800">通知を受け取る</span>
+                    <Toggle
+                      checked={settings.notification_enabled}
+                      onChange={() => handleToggle('notification_enabled')}
+                    />
+                  </div>
+
+                  <div className="h-px bg-zinc-100" />
+
+                  {/* 今日の予定通知 */}
+                  <div className="flex items-center justify-between px-4 py-3.5">
+                    <div>
+                      <p className={`text-sm ${settings.notification_enabled ? 'text-zinc-700' : 'text-zinc-400'}`}>
+                        今日の予定通知
+                      </p>
+                      <p className="text-xs text-zinc-400 mt-0.5">毎朝6時にお知らせ</p>
+                    </div>
+                    <Toggle
+                      checked={settings.daily_summary_enabled}
+                      onChange={() => handleToggle('daily_summary_enabled')}
+                      disabled={!settings.notification_enabled}
+                    />
+                  </div>
+
+                  <div className="h-px bg-zinc-100" />
+
+                  {/* 予定追加通知 */}
+                  <div className="flex items-center justify-between px-4 py-3.5">
+                    <div>
+                      <p className={`text-sm ${settings.notification_enabled ? 'text-zinc-700' : 'text-zinc-400'}`}>
+                        予定追加通知
+                      </p>
+                      <p className="text-xs text-zinc-400 mt-0.5">家族が予定を追加したとき</p>
+                    </div>
+                    <Toggle
+                      checked={settings.instant_event_created_enabled}
+                      onChange={() => handleToggle('instant_event_created_enabled')}
+                      disabled={!settings.notification_enabled}
+                    />
+                  </div>
+
+                  <div className="h-px bg-zinc-100" />
+
+                  {/* 予定削除通知 */}
+                  <div className="flex items-center justify-between px-4 py-3.5">
+                    <div>
+                      <p className={`text-sm ${settings.notification_enabled ? 'text-zinc-700' : 'text-zinc-400'}`}>
+                        予定削除通知
+                      </p>
+                      <p className="text-xs text-zinc-400 mt-0.5">家族が予定を削除したとき</p>
+                    </div>
+                    <Toggle
+                      checked={settings.instant_event_deleted_enabled}
+                      onChange={() => handleToggle('instant_event_deleted_enabled')}
+                      disabled={!settings.notification_enabled}
+                    />
+                  </div>
                 </div>
-                <Toggle
-                  checked={settings.daily_summary_enabled}
-                  onChange={() => handleToggle('daily_summary_enabled')}
-                  disabled={!settings.notification_enabled}
-                />
-              </div>
-
-              <div className="h-px bg-zinc-100" />
-
-              {/* 予定追加通知 */}
-              <div className="flex items-center justify-between px-4 py-3.5">
-                <div>
-                  <p className={`text-sm ${settings.notification_enabled ? 'text-zinc-700' : 'text-zinc-400'}`}>
-                    予定追加通知
-                  </p>
-                  <p className="text-xs text-zinc-400 mt-0.5">家族が予定を追加したとき</p>
-                </div>
-                <Toggle
-                  checked={settings.instant_event_created_enabled}
-                  onChange={() => handleToggle('instant_event_created_enabled')}
-                  disabled={!settings.notification_enabled}
-                />
-              </div>
-
-              <div className="h-px bg-zinc-100" />
-
-              {/* 予定削除通知 */}
-              <div className="flex items-center justify-between px-4 py-3.5">
-                <div>
-                  <p className={`text-sm ${settings.notification_enabled ? 'text-zinc-700' : 'text-zinc-400'}`}>
-                    予定削除通知
-                  </p>
-                  <p className="text-xs text-zinc-400 mt-0.5">家族が予定を削除したとき</p>
-                </div>
-                <Toggle
-                  checked={settings.instant_event_deleted_enabled}
-                  onChange={() => handleToggle('instant_event_deleted_enabled')}
-                  disabled={!settings.notification_enabled}
-                />
-              </div>
-            </div>
+              </>
+            )}
           </section>
 
           <div className="h-px bg-zinc-100 mx-4" />
 
           {/* お休みモード */}
           <section className="px-4 pt-5 pb-8">
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <div>
-                <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide">
-                  お休みモード
-                </p>
-                <p className="text-xs text-zinc-400 mt-1">通知を止める時間を設定します</p>
-                <p className="text-xs text-zinc-400 mt-1">この設定をしても「今日の予定通知」は通知されます</p>
-              </div>
-              <Toggle
-                checked={settings.quiet_hours_enabled}
-                onChange={() => handleToggle('quiet_hours_enabled')}
-              />
-            </div>
+            {settings && (
+              <>
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide">
+                      お休みモード
+                    </p>
+                    <p className="text-xs text-zinc-400 mt-1">通知を止める時間を設定します</p>
+                    <p className="text-xs text-zinc-400 mt-1">この設定をしても「今日の予定通知」は通知されます</p>
+                  </div>
+                  <Toggle
+                    checked={settings.quiet_hours_enabled}
+                    onChange={() => handleToggle('quiet_hours_enabled')}
+                  />
+                </div>
 
-            <div className="rounded-xl border border-zinc-100 overflow-hidden bg-zinc-50">
-              <TimeSelectRow
-                label="開始"
-                value={settings.quiet_hours_start}
-                onChange={(value) => handleTimeChange('quiet_hours_start', value)}
-                disabled={!settings.quiet_hours_enabled}
-              />
-              <div className="h-px bg-zinc-100" />
-              <TimeSelectRow
-                label="終了"
-                value={settings.quiet_hours_end}
-                onChange={(value) => handleTimeChange('quiet_hours_end', value)}
-                disabled={!settings.quiet_hours_enabled}
-              />
-            </div>
+                <div className="rounded-xl border border-zinc-100 overflow-hidden bg-zinc-50">
+                  <TimeSelectRow
+                    label="開始"
+                    value={settings.quiet_hours_start}
+                    onChange={(value) => handleTimeChange('quiet_hours_start', value)}
+                    disabled={!settings.quiet_hours_enabled}
+                  />
+                  <div className="h-px bg-zinc-100" />
+                  <TimeSelectRow
+                    label="終了"
+                    value={settings.quiet_hours_end}
+                    onChange={(value) => handleTimeChange('quiet_hours_end', value)}
+                    disabled={!settings.quiet_hours_enabled}
+                  />
+                </div>
+              </>
+            )}
           </section>
 
         </div>

@@ -488,7 +488,16 @@ function isEventInSyncRange(event: Event, range: { timeMin: string; timeMax: str
   const startDate = event.start_date;
   const rangeStartDate = range.timeMin.slice(0, 10);
   const rangeEndDate = `${range.timeMin.slice(0, 4)}-12-31`;
-  return startDate >= rangeStartDate && startDate <= rangeEndDate;
+  if (startDate < rangeStartDate || startDate > rangeEndDate) return false;
+
+  if (startDate > rangeStartDate) return true;
+
+  if (event.all_day || !event.start_time) return true;
+
+  const eventStart = new Date(`${event.start_date}T${event.start_time}:00+09:00`);
+  const rangeStart = new Date(range.timeMin);
+  if (Number.isNaN(eventStart.getTime()) || Number.isNaN(rangeStart.getTime())) return false;
+  return eventStart > rangeStart;
 }
 
 function hasGoogleDiff(appEvent: Event, googleEvent: ReturnType<typeof parseGCalEvent>): boolean {

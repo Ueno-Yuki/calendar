@@ -35,6 +35,32 @@ function addOneHour(time: string): string {
   return `${pad2((h + 1) % 24)}:${pad2(m)}`;
 }
 
+function toDateStr(date: Date): string {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function addDays(dateStr: string, days: number): string {
+  const date = new Date(`${dateStr}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return toDateStr(date);
+}
+
+function buildInitialCreateDateTimes(baseDateStr: string, now: Date): {
+  startDate: string;
+  endDate: string;
+  startTime: string;
+  endTime: string;
+} {
+  const startTime = roundTo5Min(now);
+  const endTime = addOneHour(startTime);
+  const isToday = baseDateStr === toDateStr(now);
+  const roundedToNextDay = startTime < `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+  const startDate = isToday && roundedToNextDay ? addDays(baseDateStr, 1) : baseDateStr;
+  const endDate = endTime <= startTime ? addDays(startDate, 1) : startDate;
+
+  return { startDate, endDate, startTime, endTime };
+}
+
 // 短縮表示: 6/15(月)
 function formatDateShort(dateStr: string): string {
   if (!dateStr) return '日付';
@@ -73,18 +99,21 @@ export default function EventCreateForm({
   onCancel,
 }: Props) {
   const now = new Date();
+  const initialCreateDateTimes = !initialEvent
+    ? buildInitialCreateDateTimes(dateStr, now)
+    : null;
   // 編集モードでは既存予定の値を初期値として使用する
-  const initStartTime = initialEvent?.start_time || roundTo5Min(now);
+  const initStartTime = initialEvent?.start_time || initialCreateDateTimes?.startTime || roundTo5Min(now);
   const initIsLast = !!initialEvent?.end_time && initialEvent.end_time === KAPPA_LAST_END_TIME;
   const initEndTime = (!initialEvent?.end_time || initIsLast)
-    ? addOneHour(initStartTime)
+    ? initialCreateDateTimes?.endTime || addOneHour(initStartTime)
     : initialEvent.end_time;
 
   const currentRole = readCurrentRole();
   const [quietHours, setQuietHours] = useState<QuietHoursSettings>(DEFAULT_QUIET_HOURS);
   const [title, setTitle] = useState(initialEvent?.title ?? '');
-  const [startDate, setStartDate] = useState(initialEvent?.start_date ?? dateStr);
-  const [endDate, setEndDate] = useState(initialEvent?.end_date ?? dateStr);
+  const [startDate, setStartDate] = useState(initialEvent?.start_date ?? initialCreateDateTimes?.startDate ?? dateStr);
+  const [endDate, setEndDate] = useState(initialEvent?.end_date ?? initialCreateDateTimes?.endDate ?? dateStr);
   const [allDay, setAllDay] = useState(initialEvent?.all_day ?? false);
   const [startTime, setStartTime] = useState(initStartTime);
   const [endTime, setEndTime] = useState(initEndTime);
