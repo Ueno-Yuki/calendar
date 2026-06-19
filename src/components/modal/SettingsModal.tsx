@@ -8,7 +8,7 @@ import type { StoredUser } from '@/lib/auth';
 import { FAMILY_COLORS } from '@/lib/colors';
 import type { FamilyRole } from '@/types';
 import { subscribePush, getNotificationPermission } from '@/lib/pushClient';
-import { DEFAULT_QUIET_HOURS } from '@/lib/quietHours';
+import { DEFAULT_QUIET_HOURS, isValidTime } from '@/lib/quietHours';
 
 interface NotificationSettings {
   notification_enabled: boolean;
@@ -41,21 +41,19 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-function buildTimeOptions(): string[] {
-  const options: string[] = [];
-  for (let h = 0; h < 24; h += 1) {
-    for (let m = 0; m < 60; m += 5) {
-      options.push(`${pad2(h)}:${pad2(m)}`);
-    }
-  }
-  if (!options.includes(DEFAULT_QUIET_HOURS.quiet_hours_end)) {
-    options.push(DEFAULT_QUIET_HOURS.quiet_hours_end);
-    options.sort();
-  }
-  return options;
+function parseTimeParts(value: string, fallback: string): { hour: string; minute: string } {
+  const source = isValidTime(value) ? value : fallback;
+  const [hour, minute] = source.split(':');
+  return { hour, minute };
 }
 
-const TIME_OPTIONS = buildTimeOptions();
+function buildTimeValue(hour: string, minute: string): string | null {
+  const nextValue = `${hour}:${minute}`;
+  return isValidTime(nextValue) ? nextValue : null;
+}
+
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => pad2(hour));
+const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => pad2(minute));
 
 function readCurrentRole(): FamilyRole | null {
   if (typeof window === 'undefined') return null;
@@ -132,6 +130,7 @@ export default function SettingsModal({ onClose }: Props) {
   };
 
   const handleTimeChange = (key: TimeSettingKey, value: string) => {
+    if (!isValidTime(value)) return;
     saveSettings({ ...settings, [key]: value });
   };
 
@@ -415,21 +414,49 @@ function TimeSelectRow({
   onChange: (value: string) => void;
   disabled?: boolean;
 }) {
+  const fallback = label === '開始'
+    ? DEFAULT_QUIET_HOURS.quiet_hours_start
+    : DEFAULT_QUIET_HOURS.quiet_hours_end;
+  const { hour, minute } = parseTimeParts(value, fallback);
+
   return (
-    <label className="flex items-center justify-between px-4 py-3.5 bg-white">
+    <div className="flex items-center justify-between px-4 py-3.5 bg-white">
       <span className={`text-sm ${disabled ? 'text-zinc-400' : 'text-zinc-700'}`}>{label}</span>
-      <select
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-9 rounded-lg bg-zinc-100 px-3 text-sm font-medium text-zinc-900 disabled:text-zinc-400 disabled:opacity-70"
-      >
-        {TIME_OPTIONS.map((time) => (
-          <option key={time} value={time}>
-            {time}
-          </option>
-        ))}
-      </select>
-    </label>
+      <div className="flex items-center gap-2">
+        <select
+          value={hour}
+          disabled={disabled}
+          onChange={(e) => {
+            const nextValue = buildTimeValue(e.target.value, minute);
+            if (nextValue) onChange(nextValue);
+          }}
+          aria-label={`${label}時`}
+          className="h-9 w-[68px] rounded-lg bg-zinc-100 px-3 text-center text-sm font-medium text-zinc-900 disabled:text-zinc-400 disabled:opacity-70"
+        >
+          {HOUR_OPTIONS.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+        <span className={`text-sm font-medium ${disabled ? 'text-zinc-300' : 'text-zinc-500'}`}>:</span>
+        <select
+          value={minute}
+          disabled={disabled}
+          onChange={(e) => {
+            const nextValue = buildTimeValue(hour, e.target.value);
+            if (nextValue) onChange(nextValue);
+          }}
+          aria-label={`${label}分`}
+          className="h-9 w-[68px] rounded-lg bg-zinc-100 px-3 text-center text-sm font-medium text-zinc-900 disabled:text-zinc-400 disabled:opacity-70"
+        >
+          {MINUTE_OPTIONS.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
   );
 }
