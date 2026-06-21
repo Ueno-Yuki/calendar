@@ -6,6 +6,7 @@ import GoogleSyncIcon from '@/components/icons/GoogleSyncIcon';
 interface Props {
   year: number;
   month: number;
+  isTodayMonth?: boolean;
   syncing?: boolean;
   hasRemoteUpdates?: boolean;
   isRefreshing?: boolean;
@@ -13,6 +14,7 @@ interface Props {
   showGoogleSync?: boolean;
   isGoogleSyncing?: boolean;
   googleSyncDisabled?: boolean;
+  onTodayPress?: () => void;
   onRefresh?: () => void;
   onGoogleSync?: () => void;
   onSettingsOpen?: () => void;
@@ -22,6 +24,7 @@ interface Props {
 export default function CalendarHeader({
   year,
   month,
+  isTodayMonth = false,
   syncing,
   hasRemoteUpdates = false,
   isRefreshing = false,
@@ -29,6 +32,7 @@ export default function CalendarHeader({
   showGoogleSync = false,
   isGoogleSyncing = false,
   googleSyncDisabled = false,
+  onTodayPress,
   onRefresh,
   onGoogleSync,
   onSettingsOpen,
@@ -36,14 +40,24 @@ export default function CalendarHeader({
 }: Props) {
   return (
     <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-zinc-200 shrink-0">
-      <button
-        type="button"
-        onClick={onYearMonthPress}
-        aria-label={`${year}年${month}月、タップして年月を変更`}
-        className="text-lg font-semibold text-zinc-900 active:opacity-60"
-      >
-        {year}年{month}月
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onTodayPress}
+          disabled={isTodayMonth}
+          className="shrink-0 rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-700 disabled:opacity-40 disabled:cursor-default"
+        >
+          今日
+        </button>
+        <button
+          type="button"
+          onClick={onYearMonthPress}
+          aria-label={`${year}年${month}月、タップして年月を変更`}
+          className="text-lg font-semibold text-zinc-900 active:opacity-60"
+        >
+          {year}年{month}月
+        </button>
+      </div>
       <div className="flex items-center gap-2">
         {syncing && (
           <span className="text-xs text-zinc-400 animate-pulse">更新中…</span>

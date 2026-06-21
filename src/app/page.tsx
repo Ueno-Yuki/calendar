@@ -439,6 +439,12 @@ export default function CalendarPage() {
       m === 12 ? { year: y + 1, month: 1 } : { year: y, month: m + 1 },
     );
 
+  const handleGoToToday = useCallback(() => {
+    const today = getInitialYearMonth();
+    if (year === today.year && month === today.month) return;
+    setYearMonth(today);
+  }, [month, year]);
+
   const handleDayModalClose = () => {
     setSelectedDate(null);
     isRefreshBlockedRef.current = false;
@@ -815,6 +821,7 @@ export default function CalendarPage() {
       <CalendarHeader
         year={year}
         month={month}
+        isTodayMonth={year === getInitialYearMonth().year && month === getInitialYearMonth().month}
         syncing={syncing}
         hasRemoteUpdates={hasRemoteUpdates}
         isRefreshing={isRefreshing}
@@ -822,6 +829,7 @@ export default function CalendarPage() {
         showGoogleSync={canUseGoogleSync(currentRole)}
         isGoogleSyncing={isGooglePreviewLoading || isGoogleSyncing}
         googleSyncDisabled={googleSyncDisabled}
+        onTodayPress={handleGoToToday}
         onGoogleSync={handleHeaderGoogleSync}
         onRefresh={handleManualRefresh}
         onSettingsOpen={() => setShowSettings(true)}
