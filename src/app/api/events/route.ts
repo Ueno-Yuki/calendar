@@ -22,6 +22,32 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'unknown error';
+}
+
+function isQuotaExceededError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const maybeError = error as {
+    code?: number;
+    status?: number;
+    message?: string;
+    response?: { status?: number; data?: { error?: { message?: string } } };
+  };
+  const message = (
+    maybeError.response?.data?.error?.message ??
+    maybeError.message ??
+    ''
+  ).toLowerCase();
+  return (
+    maybeError.code === 429 ||
+    maybeError.status === 429 ||
+    maybeError.response?.status === 429 ||
+    message.includes('quota exceeded') ||
+    message.includes('read requests per minute')
+  );
+}
+
 async function getRowsWithRetry(sheetName: string): Promise<Record<string, string>[]> {
   const maxAttempts = 2;
   let lastError: unknown;
@@ -31,6 +57,9 @@ async function getRowsWithRetry(sheetName: string): Promise<Record<string, strin
       return await getRows(sheetName);
     } catch (error) {
       lastError = error;
+      if (isQuotaExceededError(error)) {
+        throw error;
+      }
       if (attempt < maxAttempts) {
         await delay(500);
         continue;
@@ -39,6 +68,32 @@ async function getRowsWithRetry(sheetName: string): Promise<Record<string, strin
   }
 
   throw lastError;
+}
+
+type RowsReadLabel = 'currentRows' | 'prevRows';
+type RowsReadResult =
+  | { ok: true; sheetName: string; rows: Record<string, string>[] }
+  | { ok: false; sheetName: string; error: unknown; quotaExceeded: boolean };
+
+async function getRowsWithTiming(sheetName: string, label: RowsReadLabel): Promise<RowsReadResult> {
+  const startedAt = Date.now();
+  try {
+    const rows = await getRowsWithRetry(sheetName);
+    console.info(`[api/events] ${label}=${Date.now() - startedAt}ms`, {
+      sheetName,
+      count: rows.length,
+    });
+    return { ok: true, sheetName, rows };
+  } catch (error) {
+    const quotaExceeded = isQuotaExceededError(error);
+    console.error(`[api/events] ${label}:fail`, {
+      sheetName,
+      ms: Date.now() - startedAt,
+      quotaExceeded,
+      errorMessage: getErrorMessage(error),
+    });
+    return { ok: false, sheetName, error, quotaExceeded };
+  }
 }
 
 // ---- バリデーション ----
@@ -126,18 +181,61 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const totalStartedAt = Date.now();
     const currentSheetName = getMonthSheetName(year, month);
     const prev = getPrevMonth(year, month);
     const prevSheetName = getMonthSheetName(prev.year, prev.month);
+    const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+    console.info('[api/events:start]', yearMonth);
 
-    const [currentRows, prevRows] = await Promise.all([
-      getRowsWithRetry(currentSheetName),
-      getRowsWithRetry(prevSheetName),
+    const [currentResult, prevResult] = await Promise.all([
+      getRowsWithTiming(currentSheetName, 'currentRows'),
+      getRowsWithTiming(prevSheetName, 'prevRows'),
     ]);
+
+    if (!currentResult.ok) {
+      if (currentResult.quotaExceeded) {
+        console.error('[api/events:quota-exceeded]', {
+          year,
+          month,
+          sheetName: currentResult.sheetName,
+          errorMessage: getErrorMessage(currentResult.error),
+        });
+        return Response.json(
+          {
+            error: '一時的に予定を取得できません。少し待って再試行してください',
+            reason: 'quota_exceeded',
+          },
+          { status: 429 },
+        );
+      }
+      throw currentResult.error;
+    }
+
+    if (!prevResult.ok) {
+      console.error('[api/events:partial-prev-failed]', {
+        year,
+        month,
+        sheetName: prevResult.sheetName,
+        quotaExceeded: prevResult.quotaExceeded,
+        errorMessage: getErrorMessage(prevResult.error),
+      });
+      if (prevResult.quotaExceeded) {
+        console.error('[api/events:quota-exceeded]', {
+          year,
+          month,
+          sheetName: prevResult.sheetName,
+          errorMessage: getErrorMessage(prevResult.error),
+        });
+      }
+    }
 
     const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;
     const lastDay = getLastDayOfMonth(year, month);
 
+    const currentRows = currentResult.rows;
+    const prevRows = prevResult.ok ? prevResult.rows : [];
+    const failedSheets = prevResult.ok ? [] : [prevResult.sheetName];
     const rows = [...prevRows, ...currentRows];
     rows.forEach((row) => {
       if (!isValidDeletedCell(row.deleted)) {
@@ -155,12 +253,23 @@ export async function GET(request: NextRequest) {
       .filter((r) => r.start_date <= lastDay && r.end_date >= firstDay)
       .map(parseEventRow);
 
-    return Response.json({ events });
+    console.info(`[api/events] total=${Date.now() - totalStartedAt}ms`, {
+      yearMonth,
+      currentRows: currentRows.length,
+      prevRows: prevRows.length,
+      events: events.length,
+    });
+
+    return Response.json({
+      events,
+      partial: failedSheets.length > 0,
+      failedSheets,
+    });
   } catch (error) {
     console.error('[events:get] failed to read sheets', {
       year,
       month,
-      errorMessage: error instanceof Error ? error.message : 'unknown error',
+      errorMessage: getErrorMessage(error),
     });
     return Response.json({ error: 'データ取得に失敗しました' }, { status: 500 });
   }

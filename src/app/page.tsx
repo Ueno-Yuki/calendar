@@ -25,6 +25,9 @@ import YearMonthPickerModal from '@/components/modal/YearMonthPickerModal';
 
 interface EventsResponse {
   events: Event[];
+  partial?: boolean;
+  failedSheets?: string[];
+  reason?: string;
 }
 
 interface GoogleStatusResponse {
@@ -44,6 +47,14 @@ type RefreshCompletion = {
 };
 
 const EVENTS_CACHE_PREFIX = 'events:';
+const EVENTS_FETCH_DEBOUNCE_MS = 400;
+const POLLING_START_DELAY_MS = 5_000;
+const EVENTS_QUOTA_ERROR_MESSAGE = '一時的に予定を取得できません。少し待って再試行してください';
+
+type InFlightEventsRequest = {
+  promise: Promise<EventsResponse>;
+  controller: AbortController;
+};
 
 function canUseGoogleSync(role: FamilyRole | null): boolean {
   return role === 'mother' || role === 'me';
@@ -120,6 +131,19 @@ function writeEventsCache(
   } catch {
     // ignore localStorage errors
   }
+}
+
+function getEventsFetchErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (
+    message.includes('status=429') ||
+    message.includes('quota_exceeded') ||
+    message.includes('Quota exceeded') ||
+    message.includes('Read requests per minute')
+  ) {
+    return EVENTS_QUOTA_ERROR_MESSAGE;
+  }
+  return '予定の読み込みに失敗しました';
 }
 
 export default function CalendarPage() {
@@ -255,6 +279,9 @@ export default function CalendarPage() {
   const prevRefreshKeyRef = useRef(0);
   const hasLoadedRef = useRef(false);
   const failedMonthKeysRef = useRef<Set<string>>(new Set());
+  const inFlightEventsRef = useRef<Map<string, InFlightEventsRequest>>(new Map());
+  const activeEventFetchCountRef = useRef(0);
+  const [isEventsFetching, setIsEventsFetching] = useState(false);
 
   const fetchLastUpdatedAt = useCallback(async (): Promise<string | null | undefined> => {
     try {
@@ -291,15 +318,26 @@ export default function CalendarPage() {
   useEffect(() => {
     const key = `${year}-${String(month).padStart(2, '0')}`;
     const requestUrl = `/api/events?year=${year}&month=${month}`;
+    const startedAt = performance.now();
     const currentRefreshKey = refreshKey;
     const isRefreshTriggered = refreshKey !== prevRefreshKeyRef.current;
     const refreshRequest = isRefreshTriggered ? refreshCompletionRef.current : null;
     prevRefreshKeyRef.current = refreshKey;
+    const wasLoadedBeforeCache = hasLoadedRef.current;
     const cachedEvents = !isRefreshTriggered ? cacheRef.current[key] : undefined;
+    const localCacheStartedAt = performance.now();
     const localCachedEntry = !isRefreshTriggered && !cachedEvents ? readEventsCache(year, month) : null;
+    if (localCachedEntry) {
+      console.info('[perf:cache:load]', {
+        key,
+        ms: Math.round(performance.now() - localCacheStartedAt),
+        count: localCachedEntry.events.length,
+      });
+    }
     const shouldUseCache = !isRefreshTriggered && (cachedEvents !== undefined || localCachedEntry !== null);
 
     if (cachedEvents !== undefined) {
+      console.info('[events:cache-hit]', key);
       setEventsLoadError('');
       setEvents(cachedEvents);
       hasLoadedRef.current = true;
@@ -308,6 +346,7 @@ export default function CalendarPage() {
         pendingDateRef.current = null;
       }
     } else if (localCachedEntry) {
+      console.info('[events:local-cache-hit]', key);
       cacheRef.current[key] = localCachedEntry.events;
       setEventsLoadError('');
       setEvents(localCachedEntry.events);
@@ -326,55 +365,100 @@ export default function CalendarPage() {
     }
 
     let cancelled = false;
-    apiFetch(requestUrl)
-      .then((res) => {
-        if (!res.ok) throw new Error('fetch failed');
-        return res.json() as Promise<EventsResponse>;
-      })
-      .then((data) => {
-        if (cancelled) return;
-        cacheRef.current[key] = data.events;
-        writeEventsCache(year, month, data.events, knownLastUpdatedAtRef.current ?? null);
-        failedMonthKeysRef.current.delete(key);
-        setEventsLoadError('');
-        setEvents(data.events);
-        if (pendingDateRef.current) {
-          setSelectedDate(pendingDateRef.current);
-          pendingDateRef.current = null;
+    const debounceMs = !isRefreshTriggered && wasLoadedBeforeCache ? EVENTS_FETCH_DEBOUNCE_MS : 0;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+
+      for (const [inFlightKey, request] of inFlightEventsRef.current.entries()) {
+        if (inFlightKey !== key) {
+          request.controller.abort();
+          inFlightEventsRef.current.delete(inFlightKey);
         }
-        hasLoadedRef.current = true;
-        if (refreshRequest && refreshCompletionRef.current === refreshRequest) {
-          refreshRequest.resolve();
-          refreshCompletionRef.current = null;
-        }
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const errorMessage = err instanceof Error ? err.message : 'unknown error';
-        failedMonthKeysRef.current.add(key);
-        console.error('[events:reload] fetch failed', {
-          year,
-          month,
-          refreshKey: currentRefreshKey,
-          requestUrl,
-          errorMessage,
+      }
+
+      let inFlight = inFlightEventsRef.current.get(key);
+      if (!inFlight) {
+        const controller = new AbortController();
+        console.info('[events:start]', key);
+        activeEventFetchCountRef.current += 1;
+        setIsEventsFetching(true);
+        const promise = apiFetch(requestUrl, { signal: controller.signal })
+          .then(async (res) => {
+            if (!res.ok) {
+              const body = await res.text().catch(() => '');
+              throw new Error(`fetch failed status=${res.status} body=${body}`);
+            }
+            return res.json() as Promise<EventsResponse>;
+          })
+          .finally(() => {
+            inFlightEventsRef.current.delete(key);
+            activeEventFetchCountRef.current = Math.max(0, activeEventFetchCountRef.current - 1);
+            setIsEventsFetching(activeEventFetchCountRef.current > 0);
+          });
+        inFlight = { promise, controller };
+        inFlightEventsRef.current.set(key, inFlight);
+      } else {
+        console.info('[events:dedupe]', key);
+      }
+
+      inFlight.promise
+        .then((data) => {
+          if (cancelled) return;
+          console.info('[events:success]', {
+            key,
+            count: data.events.length,
+            partial: Boolean(data.partial),
+            failedSheets: data.failedSheets ?? [],
+          });
+          console.info('[perf:events:render-scheduled]', {
+            key,
+            ms: Math.round(performance.now() - startedAt),
+          });
+          cacheRef.current[key] = data.events;
+          writeEventsCache(year, month, data.events, knownLastUpdatedAtRef.current ?? null);
+          failedMonthKeysRef.current.delete(key);
+          setEventsLoadError('');
+          setEvents(data.events);
+          if (pendingDateRef.current) {
+            setSelectedDate(pendingDateRef.current);
+            pendingDateRef.current = null;
+          }
+          hasLoadedRef.current = true;
+          if (refreshRequest && refreshCompletionRef.current === refreshRequest) {
+            refreshRequest.resolve();
+            refreshCompletionRef.current = null;
+          }
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          const errorMessage = err instanceof Error ? err.message : 'unknown error';
+          failedMonthKeysRef.current.add(key);
+          console.error('[events:fail]', key, err);
+          console.error('[events:reload] fetch failed', {
+            year,
+            month,
+            refreshKey: currentRefreshKey,
+            requestUrl,
+            errorMessage,
+          });
+          if (err instanceof ApiAuthError) setAuthError(true);
+          setEventsLoadError(getEventsFetchErrorMessage(err));
+          if (refreshRequest && refreshCompletionRef.current === refreshRequest) {
+            refreshRequest.reject(new Error(errorMessage));
+            refreshCompletionRef.current = null;
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+            setSyncing(false);
+          }
         });
-        if (err instanceof ApiAuthError) setAuthError(true);
-        setEventsLoadError('予定の読み込みに失敗しました');
-        if (refreshRequest && refreshCompletionRef.current === refreshRequest) {
-          refreshRequest.reject(new Error(errorMessage));
-          refreshCompletionRef.current = null;
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-          setSyncing(false);
-        }
-      });
+    }, debounceMs);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
       if (refreshRequest && refreshCompletionRef.current === refreshRequest) {
         refreshRequest.reject(new Error('reload cancelled'));
         refreshCompletionRef.current = null;
@@ -384,12 +468,12 @@ export default function CalendarPage() {
 
   // 30秒ポーリング: 他の家族の予定変更を検知する（ここでは自動更新しない）
   useEffect(() => {
-    if (authError || loading) return;
+    if (authError || loading || syncing || isEventsFetching) return;
 
     let cancelled = false;
 
     const poll = async () => {
-      if (cancelled || document.hidden) return;
+      if (cancelled || document.hidden || activeEventFetchCountRef.current > 0) return;
       try {
         const lastUpdatedAt = await fetchLastUpdatedAt();
         if (lastUpdatedAt === undefined || cancelled) return;
@@ -413,6 +497,7 @@ export default function CalendarPage() {
       }
     };
 
+    const startupPollTimer = window.setTimeout(poll, POLLING_START_DELAY_MS);
     const intervalId = setInterval(poll, 30_000);
 
     const handleVisibilityChange = () => {
@@ -420,14 +505,13 @@ export default function CalendarPage() {
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    poll(); // 起動直後に初回ポーリング
-
     return () => {
       cancelled = true;
+      window.clearTimeout(startupPollTimer);
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [authError, fetchLastUpdatedAt, loading, setKnownLastUpdated]);
+  }, [authError, fetchLastUpdatedAt, isEventsFetching, loading, setKnownLastUpdated, syncing]);
 
   const goPrevMonth = () =>
     setYearMonth(({ year: y, month: m }) =>
@@ -459,8 +543,8 @@ export default function CalendarPage() {
         setHasRemoteUpdates(false);
         return refreshKnownLastUpdated();
       })
-      .catch(() => {
-        setEventsLoadError('予定の読み込みに失敗しました');
+      .catch((error: unknown) => {
+        setEventsLoadError(getEventsFetchErrorMessage(error));
       });
   };
 
@@ -470,8 +554,8 @@ export default function CalendarPage() {
         setHasRemoteUpdates(false);
         return refreshKnownLastUpdated();
       })
-      .catch(() => {
-        setEventsLoadError('予定の読み込みに失敗しました');
+      .catch((error: unknown) => {
+        setEventsLoadError(getEventsFetchErrorMessage(error));
       });
   };
 
@@ -481,7 +565,7 @@ export default function CalendarPage() {
   }, []);
 
   const handleManualRefresh = useCallback(async () => {
-    if (isRefreshBlockedRef.current || isRefreshing) return;
+    if (isRefreshBlockedRef.current || isRefreshing || activeEventFetchCountRef.current > 0) return;
     setIsRefreshing(true);
     setEventsLoadError('');
     setGoogleSyncMessage('');
@@ -491,8 +575,8 @@ export default function CalendarPage() {
       const latest = await fetchLastUpdatedAt();
       if (latest !== undefined) setKnownLastUpdated(latest);
       setHasRemoteUpdates(false);
-    } catch {
-      setEventsLoadError('予定の読み込みに失敗しました');
+    } catch (error: unknown) {
+      setEventsLoadError(getEventsFetchErrorMessage(error));
     } finally {
       setIsRefreshing(false);
     }
@@ -719,9 +803,9 @@ export default function CalendarPage() {
       setGoogleSyncMessage('Google同期しました');
       setHasRemoteUpdates(false);
       refreshKnownLastUpdated();
-    } catch {
+    } catch (error: unknown) {
       if (syncSucceeded) {
-        setEventsLoadError('予定の読み込みに失敗しました');
+        setEventsLoadError(getEventsFetchErrorMessage(error));
       } else {
         setGoogleSyncModalError('Google同期に失敗しました');
       }
@@ -786,9 +870,9 @@ export default function CalendarPage() {
       }
       setHasRemoteUpdates(false);
       refreshKnownLastUpdated();
-    } catch {
+    } catch (error: unknown) {
       if (syncSucceeded) {
-        setEventsLoadError('予定の読み込みに失敗しました');
+        setEventsLoadError(getEventsFetchErrorMessage(error));
       } else {
         setGoogleSyncModalError('Googleへの反映に失敗しました');
       }
@@ -825,7 +909,7 @@ export default function CalendarPage() {
         syncing={syncing}
         hasRemoteUpdates={hasRemoteUpdates}
         isRefreshing={isRefreshing}
-        refreshDisabled={isRefreshBlocked}
+        refreshDisabled={isRefreshBlocked || isEventsFetching}
         showGoogleSync={canUseGoogleSync(currentRole)}
         isGoogleSyncing={isGooglePreviewLoading || isGoogleSyncing}
         googleSyncDisabled={googleSyncDisabled}
@@ -863,7 +947,7 @@ export default function CalendarPage() {
         onPrevMonth={goPrevMonth}
         onNextMonth={goNextMonth}
         onRefresh={handleManualRefresh}
-        refreshDisabled={isRefreshBlocked || isRefreshing || selectedDate !== null}
+        refreshDisabled={isRefreshBlocked || isRefreshing || isEventsFetching || selectedDate !== null}
         onDayPress={(dateStr) => setSelectedDate(dateStr)}
       />
       {selectedDate && (
