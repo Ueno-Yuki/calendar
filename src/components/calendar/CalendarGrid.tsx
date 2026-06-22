@@ -14,7 +14,6 @@ interface Props {
   year: number;
   month: number;
   events: Event[];
-  loading: boolean;
   onPrevMonth: () => void;
   onNextMonth: () => void;
   onRefresh: () => void;
@@ -26,7 +25,6 @@ export default function CalendarGrid({
   year,
   month,
   events,
-  loading,
   onPrevMonth,
   onNextMonth,
   onRefresh,
@@ -94,13 +92,6 @@ export default function CalendarGrid({
           <CalendarWeekRow key={i} weekData={week} onDayPress={onDayPress} />
         ))}
       </div>
-
-      {/* Initial load overlay only */}
-      {loading && (
-        <div className="absolute inset-0 bg-white/60 flex items-center justify-center z-10">
-          <span className="text-sm text-zinc-400">読み込み中…</span>
-        </div>
-      )}
     </div>
   );
 }

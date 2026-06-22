@@ -153,7 +153,7 @@ export default function CalendarPage() {
     month: initialRouteState.month,
   }));
   const [events, setEvents] = useState<Event[]>([]);
-  const [loading, setLoading] = useState(true); // 初回ロードのみ全画面オーバーレイ
+  const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false); // 月切り替え時のヘッダースピナー
   const [authError, setAuthError] = useState(false);
   const [eventsLoadError, setEventsLoadError] = useState('');
@@ -357,12 +357,8 @@ export default function CalendarPage() {
       }
     }
 
-    if (!hasLoadedRef.current && !shouldUseCache) {
-      setLoading(true);
-    } else {
-      setLoading(false);
-      setSyncing(true);
-    }
+    setLoading(!hasLoadedRef.current && !shouldUseCache);
+    setSyncing(true);
 
     let cancelled = false;
     const debounceMs = !isRefreshTriggered && wasLoadedBeforeCache ? EVENTS_FETCH_DEBOUNCE_MS : 0;
@@ -943,7 +939,6 @@ export default function CalendarPage() {
         year={year}
         month={month}
         events={events}
-        loading={loading}
         onPrevMonth={goPrevMonth}
         onNextMonth={goNextMonth}
         onRefresh={handleManualRefresh}
