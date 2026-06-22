@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import type { Event } from '@/types';
+import type { Event, EventMutationResult } from '@/types';
 import { getCurrentUser, AuthError } from '@/lib/auth';
 import { updateRowByHeaders, appendRowByHeaders, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
 import { findEventById, eventToRecord } from '@/lib/eventsDb';
@@ -115,6 +115,7 @@ export async function PUT(
       return Response.json({ error: '他人の予定は編集できません' }, { status: 403 });
     }
 
+    const eventsLastUpdatedAt = new Date().toISOString();
     const updated: Event = {
       ...found.event,
       title: input.title,
@@ -125,7 +126,7 @@ export async function PUT(
       end_time: input.end_time,
       location: input.location,
       memo: input.memo,
-      updated_at: new Date().toISOString(),
+      updated_at: eventsLastUpdatedAt,
     };
 
     const oldMonthKey = found.event.start_date.slice(0, 7); // YYYY-MM
@@ -148,9 +149,10 @@ export async function PUT(
       await updateRowByHeaders(found.sheetName, found.dataRowIndex, eventToRecord(updated));
     }
 
-    setSyncMeta('events_last_updated_at', new Date().toISOString()).catch(() => {});
+    await setSyncMeta('events_last_updated_at', eventsLastUpdatedAt);
 
-    return Response.json(updated);
+    const result: EventMutationResult = { event: updated, eventsLastUpdatedAt };
+    return Response.json(result);
   } catch {
     return Response.json({ error: '予定の更新に失敗しました' }, { status: 500 });
   }
@@ -189,20 +191,22 @@ export async function DELETE(
       return Response.json({ error: '他人の予定は削除できません' }, { status: 403 });
     }
 
+    const eventsLastUpdatedAt = new Date().toISOString();
     const deleted: Event = {
       ...found.event,
       deleted: true,
-      updated_at: new Date().toISOString(),
+      updated_at: eventsLastUpdatedAt,
     };
 
     await updateRowByHeaders(found.sheetName, found.dataRowIndex, eventToRecord(deleted));
 
-    setSyncMeta('events_last_updated_at', new Date().toISOString()).catch(() => {});
+    await setSyncMeta('events_last_updated_at', eventsLastUpdatedAt);
 
     // 本人以外の家族へ即時Push通知（失敗しても削除成功扱い）
     sendInstantNotification('event_deleted', deleted, currentUser.role).catch(() => {});
 
-    return Response.json({ ok: true });
+    const result: EventMutationResult = { event: deleted, eventsLastUpdatedAt };
+    return Response.json(result);
   } catch {
     return Response.json({ error: '予定の削除に失敗しました' }, { status: 500 });
   }

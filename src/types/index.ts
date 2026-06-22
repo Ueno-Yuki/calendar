@@ -26,6 +26,11 @@ export interface Event {
   deleted: boolean;
 }
 
+export interface EventMutationResult {
+  event: Event;
+  eventsLastUpdatedAt: string;
+}
+
 export interface User {
   user_id: string;
   name: string;

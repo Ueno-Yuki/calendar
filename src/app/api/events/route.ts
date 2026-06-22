@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import type { Event } from '@/types';
+import type { Event, EventMutationResult } from '@/types';
 import { getCurrentUser, AuthError } from '@/lib/auth';
 import { getRows, appendRowByHeaders, getMonthSheetName, ensureMonthSheet } from '@/lib/sheets';
 import { parseEventRow, eventToRecord, isValidDeletedCell } from '@/lib/eventsDb';
@@ -305,6 +305,7 @@ export async function POST(request: NextRequest) {
   try {
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
+    const eventsLastUpdatedAt = new Date().toISOString();
 
     const event: Event = {
       id,
@@ -332,7 +333,7 @@ export async function POST(request: NextRequest) {
     await ensureMonthSheet(startYear, startMonth);
     await appendRowByHeaders(getMonthSheetName(startYear, startMonth), eventToRecord(event));
 
-    setSyncMeta('events_last_updated_at', new Date().toISOString()).catch(() => {});
+    await setSyncMeta('events_last_updated_at', eventsLastUpdatedAt);
 
     upsertTemplate({
       person: event.person,
@@ -346,7 +347,8 @@ export async function POST(request: NextRequest) {
     // 本人以外の家族へ即時Push通知（失敗しても登録成功扱い）
     sendInstantNotification('event_created', event, currentUser.role).catch(() => {});
 
-    return Response.json(event, { status: 201 });
+    const result: EventMutationResult = { event, eventsLastUpdatedAt };
+    return Response.json(result, { status: 201 });
   } catch {
     return Response.json({ error: '予定の登録に失敗しました' }, { status: 500 });
   }

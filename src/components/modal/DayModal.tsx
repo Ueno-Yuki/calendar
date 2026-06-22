@@ -3,7 +3,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { X, Plus, Trash2, Pencil, MapPin } from 'lucide-react';
 import { formatEventTimeRange } from '@/lib/kappaShift';
-import type { Event, FamilyRole } from '@/types';
+import type { Event, EventMutationResult, FamilyRole } from '@/types';
 import { FAMILY_COLORS } from '@/lib/colors';
 import { STORAGE_KEY } from '@/lib/auth';
 import type { StoredUser } from '@/lib/auth';
@@ -19,8 +19,8 @@ interface Props {
   dateStr: string;
   events: Event[];
   onClose: () => void;
-  onEventCreated: () => void;
-  onEventDeleted: () => void;
+  onEventSaved: (result: EventMutationResult) => void;
+  onEventDeleted: (result: EventMutationResult) => void;
   onRefreshBlockChange: (blocked: boolean) => void;
 }
 
@@ -39,7 +39,7 @@ export default function DayModal({
   dateStr,
   events,
   onClose,
-  onEventCreated,
+  onEventSaved,
   onEventDeleted,
   onRefreshBlockChange,
 }: Props) {
@@ -108,14 +108,14 @@ export default function DayModal({
   );
 
   // 新規作成保存後
-  const handleSaved = () => {
-    onEventCreated();
+  const handleSaved = (result: EventMutationResult) => {
+    onEventSaved(result);
     setMode('schedule');
   };
 
   // 編集保存後
-  const handleEditSaved = () => {
-    onEventCreated(); // refreshKey++ で再取得
+  const handleEditSaved = (result: EventMutationResult) => {
+    onEventSaved(result);
     setMode('schedule');
     setEventToEdit(null);
   };
@@ -150,9 +150,10 @@ export default function DayModal({
         { method: 'DELETE' },
       );
       if (!res.ok) return;
+      const data = (await res.json()) as EventMutationResult;
       setEventToDelete(null);
       setSwipedEventId(null);
-      onEventDeleted();
+      onEventDeleted(data);
     } catch {
       setEventToDelete(null);
       setSwipedEventId(null);

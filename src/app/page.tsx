@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Event, FamilyRole } from '@/types';
+import type { Event, EventMutationResult, FamilyRole } from '@/types';
 import { apiFetch, ApiAuthError } from '@/lib/apiClient';
 import { STORAGE_KEY } from '@/lib/auth';
 import type { StoredUser } from '@/lib/auth';
@@ -133,6 +133,48 @@ function writeEventsCache(
   }
 }
 
+function parseEventsCacheKey(key: string): { year: number; month: number } | null {
+  const yearMonth = key.startsWith(EVENTS_CACHE_PREFIX)
+    ? key.slice(EVENTS_CACHE_PREFIX.length)
+    : key;
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) return null;
+  const [year, month] = yearMonth.split('-').map(Number);
+  if (!year || !month) return null;
+  return { year, month };
+}
+
+function getMonthBounds(year: number, month: number): { firstDay: string; lastDay: string } {
+  const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;
+  const lastDate = new Date(year, month, 0).getDate();
+  const lastDay = `${year}-${String(month).padStart(2, '0')}-${String(lastDate).padStart(2, '0')}`;
+  return { firstDay, lastDay };
+}
+
+function doesEventOverlapMonth(event: Event, year: number, month: number): boolean {
+  const { firstDay, lastDay } = getMonthBounds(year, month);
+  return !event.deleted && event.start_date <= lastDay && event.end_date >= firstDay;
+}
+
+function sortMonthEvents(events: Event[]): Event[] {
+  return [...events].sort((a, b) => {
+    const startDateCompare = a.start_date.localeCompare(b.start_date);
+    if (startDateCompare !== 0) return startDateCompare;
+    const endDateCompare = a.end_date.localeCompare(b.end_date);
+    if (endDateCompare !== 0) return endDateCompare;
+    const startTimeCompare = a.start_time.localeCompare(b.start_time);
+    if (startTimeCompare !== 0) return startTimeCompare;
+    return a.created_at.localeCompare(b.created_at);
+  });
+}
+
+function applyEventToMonthEvents(events: Event[], event: Event, year: number, month: number): Event[] {
+  const withoutTarget = events.filter((item) => item.id !== event.id);
+  if (!doesEventOverlapMonth(event, year, month)) {
+    return sortMonthEvents(withoutTarget);
+  }
+  return sortMonthEvents([...withoutTarget, event]);
+}
+
 function getEventsFetchErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : '';
   if (
@@ -190,9 +232,14 @@ export default function CalendarPage() {
   const [googleSyncModalError, setGoogleSyncModalError] = useState('');
 
   // refでクロージャ内から最新状態を参照する
+  const eventsRef = useRef<Event[]>([]);
   const isRefreshBlockedRef = useRef(false);
   const knownLastUpdatedAtRef = useRef<string | null | undefined>(undefined);
   const refreshCompletionRef = useRef<RefreshCompletion | null>(null);
+
+  useEffect(() => {
+    eventsRef.current = events;
+  }, [events]);
 
   useEffect(() => {
     knownLastUpdatedAtRef.current = knownLastUpdatedAt;
@@ -314,6 +361,60 @@ export default function CalendarPage() {
       setRefreshKey((k) => k + 1);
     });
   }, []);
+
+  const applyLocalEventMutation = useCallback(
+    ({ event, eventsLastUpdatedAt }: EventMutationResult) => {
+      const currentMonthKey = `${year}-${String(month).padStart(2, '0')}`;
+      const nextVisibleEvents = applyEventToMonthEvents(eventsRef.current, event, year, month);
+
+      eventsRef.current = nextVisibleEvents;
+      setEvents(nextVisibleEvents);
+      setEventsLoadError('');
+      setHasRemoteUpdates(false);
+      setKnownLastUpdated(eventsLastUpdatedAt);
+
+      cacheRef.current[currentMonthKey] = nextVisibleEvents;
+
+      for (const cacheKey of Object.keys(cacheRef.current)) {
+        const parsed = parseEventsCacheKey(cacheKey);
+        if (!parsed) continue;
+        cacheRef.current[cacheKey] = applyEventToMonthEvents(
+          cacheRef.current[cacheKey],
+          event,
+          parsed.year,
+          parsed.month,
+        );
+      }
+
+      if (typeof window !== 'undefined') {
+        const cacheKeys = new Set<string>([currentMonthKey]);
+        Object.keys(cacheRef.current).forEach((cacheKey) => cacheKeys.add(cacheKey));
+        for (let i = 0; i < window.localStorage.length; i += 1) {
+          const key = window.localStorage.key(i);
+          if (key && key.startsWith(EVENTS_CACHE_PREFIX)) {
+            cacheKeys.add(key);
+          }
+        }
+
+        cacheKeys.forEach((cacheKey) => {
+          const parsed = parseEventsCacheKey(cacheKey);
+          if (!parsed) return;
+
+          const cachedEvents = cacheRef.current[cacheKey];
+          if (cachedEvents) {
+            writeEventsCache(parsed.year, parsed.month, cachedEvents, eventsLastUpdatedAt);
+            return;
+          }
+
+          const localEntry = readEventsCache(parsed.year, parsed.month);
+          if (!localEntry) return;
+          const nextMonthEvents = applyEventToMonthEvents(localEntry.events, event, parsed.year, parsed.month);
+          writeEventsCache(parsed.year, parsed.month, nextMonthEvents, eventsLastUpdatedAt);
+        });
+      }
+    },
+    [month, setKnownLastUpdated, year],
+  );
 
   useEffect(() => {
     const key = `${year}-${String(month).padStart(2, '0')}`;
@@ -531,29 +632,13 @@ export default function CalendarPage() {
     setIsRefreshBlocked(false);
   };
 
-  // 予定保存・削除後: 自分の操作は即時反映し、ポーリングの既知値を更新する
-  // refreshKnownLastUpdated で自分の操作を knownLastUpdatedAt に反映し、次のポーリングで二重リロードしない
-  const handleEventCreated = () => {
-    void reloadEvents()
-      .then(() => {
-        setHasRemoteUpdates(false);
-        return refreshKnownLastUpdated();
-      })
-      .catch((error: unknown) => {
-        setEventsLoadError(getEventsFetchErrorMessage(error));
-      });
-  };
+  const handleEventSaved = useCallback((result: EventMutationResult) => {
+    applyLocalEventMutation(result);
+  }, [applyLocalEventMutation]);
 
-  const handleEventDeleted = () => {
-    void reloadEvents()
-      .then(() => {
-        setHasRemoteUpdates(false);
-        return refreshKnownLastUpdated();
-      })
-      .catch((error: unknown) => {
-        setEventsLoadError(getEventsFetchErrorMessage(error));
-      });
-  };
+  const handleEventDeleted = useCallback((result: EventMutationResult) => {
+    applyLocalEventMutation(result);
+  }, [applyLocalEventMutation]);
 
   const handleRefreshBlockChange = useCallback((blocked: boolean) => {
     isRefreshBlockedRef.current = blocked;
@@ -950,7 +1035,7 @@ export default function CalendarPage() {
           dateStr={selectedDate}
           events={events}
           onClose={handleDayModalClose}
-          onEventCreated={handleEventCreated}
+          onEventSaved={handleEventSaved}
           onEventDeleted={handleEventDeleted}
           onRefreshBlockChange={handleRefreshBlockChange}
         />

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { CalendarDays, Clock, MapPin, FileText, ToggleLeft, ToggleRight, BellOff, X } from 'lucide-react';
-import type { EventTemplate, FamilyRole } from '@/types';
+import type { EventTemplate, FamilyRole, EventMutationResult } from '@/types';
 import { apiFetch } from '@/lib/apiClient';
 import { STORAGE_KEY } from '@/lib/auth';
 import type { StoredUser } from '@/lib/auth';
@@ -87,7 +87,7 @@ interface Props {
   dateStr: string;
   mode?: 'create' | 'edit';
   initialEvent?: Event;
-  onSaved: () => void;
+  onSaved: (result: EventMutationResult) => void;
   onCancel: () => void;
 }
 
@@ -235,12 +235,13 @@ export default function EventCreateForm({
         });
       }
 
+      const data = (await res.json()) as EventMutationResult | { error?: string };
       if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
-        setErrors([data.error ?? (mode === 'edit' ? '更新に失敗しました' : '登録に失敗しました')]);
+        const errorData = data as { error?: string };
+        setErrors([errorData.error ?? (mode === 'edit' ? '更新に失敗しました' : '登録に失敗しました')]);
         return;
       }
-      onSaved();
+      onSaved(data as EventMutationResult);
     } catch {
       setErrors(['通信エラーが発生しました']);
     } finally {
