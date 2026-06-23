@@ -3,9 +3,6 @@
 スマートフォン利用を前提にした、家族向けの共有カレンダーアプリです。  
 見やすさ、入力の速さ、通知の実用性を優先して設計しています。
 
-このリポジトリは `Private` ですが、README は外部共有を想定した内容に整えています。  
-家族固有の運用情報、認証トークン、環境値、実データは含めていません。
-
 ---
 
 ## Overview
@@ -54,7 +51,6 @@
 - 予定編集
 - 論理削除
 - タイトル候補サジェスト
-- TimeTree 風の時間選択 UI
 - 特定タイトルに応じた業務向け時刻入力拡張
 
 ### Notifications
@@ -224,23 +220,3 @@ Private repository 内でも、秘密情報は `.env.local` / Vercel Environment
 - CSV 出力
 - LINE 連携
 - 高度な権限制御
-
-詳細仕様は [docs/00_project/mvp-final-specification.md](/Users/yukiueno/project/calendar/docs/00_project/mvp-final-specification.md) を参照してください。
-
----
-
-## Portfolio Use
-
-この README は、そのまま外部向けのケーススタディ原稿として使えるように整えています。  
-ただし、リポジトリ自体が Private のため、外部公開するには別の導線が必要です。
-
-実務上は次のどちらかが適切です。
-
-1. この README をベースに、公開用のポートフォリオページを別に作る
-2. 機密情報を除いた public mirror / case study repo を別途作る
-
----
-
-## Status
-
-Active private project.
