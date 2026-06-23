@@ -1,9 +1,11 @@
 import { google } from 'googleapis';
 import type { calendar_v3 } from 'googleapis';
 import type { Event } from '@/types';
-import { getSyncMeta } from '@/lib/syncMetaDb';
+import { getSyncMeta, setSyncMeta } from '@/lib/syncMetaDb';
 
 const REFRESH_TOKEN_KEY = 'mother_google_refresh_token';
+const AUTH_STATUS_KEY = 'mother_google_auth_status';
+const REAUTH_REQUIRED_STATUS = 'reauth_required';
 const CALENDAR_ID = () => process.env.GOOGLE_CALENDAR_ID_MOTHER ?? 'primary';
 
 export function getOAuth2Client(redirectUri?: string) {
@@ -33,6 +35,39 @@ export async function exchangeCodeForTokens(
   return { refreshToken: tokens.refresh_token };
 }
 
+function getGoogleAuthErrorMessage(error: unknown): string {
+  if (!error || typeof error !== 'object') return '';
+  const maybeError = error as {
+    message?: string;
+    response?: { data?: { error?: string; error_description?: string } };
+  };
+  return [
+    maybeError.response?.data?.error,
+    maybeError.response?.data?.error_description,
+    maybeError.message,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .join(' ')
+    .toLowerCase();
+}
+
+function isInvalidGrantError(error: unknown): boolean {
+  const message = getGoogleAuthErrorMessage(error);
+  return (
+    message.includes('invalid_grant') ||
+    message.includes('token has been expired or revoked') ||
+    message.includes('expired or revoked')
+  );
+}
+
+export async function markGoogleReauthRequired(): Promise<void> {
+  await setSyncMeta(AUTH_STATUS_KEY, REAUTH_REQUIRED_STATUS);
+}
+
+export async function clearGoogleReauthRequired(): Promise<void> {
+  await setSyncMeta(AUTH_STATUS_KEY, '');
+}
+
 export function getStoredGoogleRefreshToken(syncMeta?: Map<string, string>): string | null {
   const value = syncMeta?.get(REFRESH_TOKEN_KEY) ?? null;
   return value && value.trim() ? value.trim() : null;
@@ -41,15 +76,22 @@ export function getStoredGoogleRefreshToken(syncMeta?: Map<string, string>): str
 export async function getGoogleAccessToken(refreshToken: string): Promise<string> {
   const client = getOAuth2Client();
   client.setCredentials({ refresh_token: refreshToken });
-  const result = await client.getAccessToken();
-  const accessToken =
-    typeof result === 'object' && result !== null && 'token' in result
-      ? result.token
-      : null;
-  if (!accessToken) {
-    throw new Error('Google access token not returned');
+  try {
+    const result = await client.getAccessToken();
+    const accessToken =
+      typeof result === 'object' && result !== null && 'token' in result
+        ? result.token
+        : null;
+    if (!accessToken) {
+      throw new Error('Google access token not returned');
+    }
+    return accessToken;
+  } catch (error) {
+    if (isInvalidGrantError(error)) {
+      await markGoogleReauthRequired().catch(() => {});
+    }
+    throw error;
   }
-  return accessToken;
 }
 
 export async function getAuthorizedCalendar(options?: {

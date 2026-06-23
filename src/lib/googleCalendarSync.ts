@@ -72,15 +72,18 @@ export interface GoogleSyncPreviewResult {
 
 export interface GoogleSyncPreviewErrorResult {
   ok: false;
-  reason:
-    | 'sync_disabled'
-    | 'not_connected'
-    | 'google_auth_failed'
-    | 'google_scope_missing'
-    | 'sheets_read_failed'
-    | 'quota_exceeded'
-    | 'unknown';
+  reason: GoogleSyncFailureReason;
 }
+
+export type GoogleSyncFailureReason =
+  | 'sync_disabled'
+  | 'not_connected'
+  | 'google_reauth_required'
+  | 'google_auth_failed'
+  | 'google_scope_missing'
+  | 'sheets_read_failed'
+  | 'quota_exceeded'
+  | 'unknown';
 
 export interface GoogleSyncDebugResult {
   debug: true;
@@ -366,9 +369,17 @@ function isGoogleAuthFailedError(error: unknown): boolean {
   const message = getApiErrorBodyMessage(error).toLowerCase();
   return (
     status === 401 ||
-    message.includes('invalid_grant') ||
     message.includes('invalid credentials') ||
     message.includes('token has been expired or revoked')
+  );
+}
+
+function isGoogleReauthRequiredError(error: unknown): boolean {
+  const message = getApiErrorBodyMessage(error).toLowerCase();
+  return (
+    message.includes('invalid_grant') ||
+    message.includes('token has been expired or revoked') ||
+    message.includes('expired or revoked')
   );
 }
 
@@ -382,13 +393,15 @@ type GooglePreviewStep =
 function getGooglePreviewFailureReason(
   step: GooglePreviewStep,
   error: unknown,
-): GoogleSyncPreviewErrorResult['reason'] {
+): GoogleSyncFailureReason {
   if (isQuotaExceededError(error)) return 'quota_exceeded';
   if (step === 'refresh_google_token') {
+    if (isGoogleReauthRequiredError(error)) return 'google_reauth_required';
     if (isGoogleScopeMissingError(error)) return 'google_scope_missing';
     if (isGoogleAuthFailedError(error)) return 'google_auth_failed';
   }
   if (step === 'fetch_google_events') {
+    if (isGoogleReauthRequiredError(error)) return 'google_reauth_required';
     if (isGoogleScopeMissingError(error)) return 'google_scope_missing';
     if (isGoogleAuthFailedError(error)) return 'google_auth_failed';
   }
@@ -1074,115 +1087,132 @@ export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | Goo
 // 母の予定だけを対象に、現在日時から当年末までのGoogle予定と突き合わせる。
 // 削除は扱わず、新規登録候補・更新候補・重複スキップを返す。
 
-export async function previewGoogleReverseSync(): Promise<GoogleReverseSyncPreviewResult | GoogleReverseSyncResult> {
+export async function previewGoogleReverseSync(): Promise<
+  GoogleReverseSyncPreviewResult | GoogleReverseSyncResult | GoogleSyncPreviewErrorResult
+> {
   if (isSyncDisabled()) {
     return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'sync_disabled' };
   }
 
-  const calendar = await getAuthorizedCalendar();
-  if (!calendar) {
-    return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'not_connected' };
-  }
+  let step: GooglePreviewStep = 'refresh_google_token';
 
-  const { range, parsedItems } = await listCurrentGoogleEvents(calendar);
-  const googleIndexes = buildGoogleIndexes(parsedItems);
-  const sheetEntries = await buildSheetEventEntryMap();
-
-  const createCandidates: GoogleReverseSyncPreviewResult['createCandidates'] = [];
-  const updateCandidates: GoogleReverseSyncPreviewResult['updateCandidates'] = [];
-  const skipped: GoogleReverseSyncPreviewResult['skipped'] = [];
-
-  for (const { event } of sheetEntries.values()) {
-    if (event.deleted) continue;
-    if (!isMotherEvent(event)) {
-      skipped.push({
-        sheetEventId: event.id,
-        title: event.title,
-        startDate: event.start_date,
-        reason: 'not_target_user',
-      });
-      continue;
-    }
-    if (!isEventInSyncRange(event, range)) {
-      skipped.push({
-        sheetEventId: event.id,
-        title: event.title,
-        startDate: event.start_date,
-        reason: 'out_of_range',
-      });
-      continue;
+  try {
+    const calendar = await getAuthorizedCalendar();
+    if (!calendar) {
+      return { synced: false, created: 0, updated: 0, skipped: 0, syncedAt: '', reason: 'not_connected' };
     }
 
-    const importKey = buildImportKey(event.start_date, event.title);
-    if (event.google_event_id) {
-      const linkedGoogleEvent = googleIndexes.byId.get(event.google_event_id);
-      if (!linkedGoogleEvent) {
+    step = 'fetch_google_events';
+    const { range, parsedItems } = await listCurrentGoogleEvents(calendar);
+    const googleIndexes = buildGoogleIndexes(parsedItems);
+
+    step = 'read_existing_events';
+    const sheetEntries = await buildSheetEventEntryMap();
+
+    step = 'build_preview';
+    const createCandidates: GoogleReverseSyncPreviewResult['createCandidates'] = [];
+    const updateCandidates: GoogleReverseSyncPreviewResult['updateCandidates'] = [];
+    const skipped: GoogleReverseSyncPreviewResult['skipped'] = [];
+
+    for (const { event } of sheetEntries.values()) {
+      if (event.deleted) continue;
+      if (!isMotherEvent(event)) {
         skipped.push({
           sheetEventId: event.id,
           title: event.title,
           startDate: event.start_date,
-          reason: 'linked_google_event_not_found',
+          reason: 'not_target_user',
+        });
+        continue;
+      }
+      if (!isEventInSyncRange(event, range)) {
+        skipped.push({
+          sheetEventId: event.id,
+          title: event.title,
+          startDate: event.start_date,
+          reason: 'out_of_range',
         });
         continue;
       }
 
-      if (hasGoogleDiff(event, linkedGoogleEvent)) {
-        updateCandidates.push({
-          sheetEventId: event.id,
-          googleEventId: event.google_event_id,
-          startDate: event.start_date,
-          appTitle: event.title,
-          googleTitle: linkedGoogleEvent.title,
-          suggestedColorId: inferReverseSyncColorId(event),
-        });
-      } else {
+      const importKey = buildImportKey(event.start_date, event.title);
+      if (event.google_event_id) {
+        const linkedGoogleEvent = googleIndexes.byId.get(event.google_event_id);
+        if (!linkedGoogleEvent) {
+          skipped.push({
+            sheetEventId: event.id,
+            title: event.title,
+            startDate: event.start_date,
+            reason: 'linked_google_event_not_found',
+          });
+          continue;
+        }
+
+        if (hasGoogleDiff(event, linkedGoogleEvent)) {
+          updateCandidates.push({
+            sheetEventId: event.id,
+            googleEventId: event.google_event_id,
+            startDate: event.start_date,
+            appTitle: event.title,
+            googleTitle: linkedGoogleEvent.title,
+            suggestedColorId: inferReverseSyncColorId(event),
+          });
+        } else {
+          skipped.push({
+            sheetEventId: event.id,
+            title: event.title,
+            startDate: event.start_date,
+            reason: 'only_google_color_diff_or_unchanged',
+          });
+        }
+        continue;
+      }
+
+      if (googleIndexes.byImportKey.has(importKey)) {
         skipped.push({
           sheetEventId: event.id,
           title: event.title,
           startDate: event.start_date,
-          reason: 'only_google_color_diff_or_unchanged',
+          reason: 'same_date_title_exists',
         });
+        continue;
       }
-      continue;
+
+      const sameDateGoogleEvents = googleIndexes.byStartDate.get(event.start_date) ?? [];
+      const differentTitleEvents = sameDateGoogleEvents.filter(
+        (googleEvent) => normalizeImportTitle(googleEvent.title) !== normalizeImportTitle(event.title),
+      );
+      if (differentTitleEvents.length === 1) {
+        updateCandidates.push({
+          sheetEventId: event.id,
+          googleEventId: differentTitleEvents[0].google_event_id,
+          startDate: event.start_date,
+          appTitle: event.title,
+          googleTitle: differentTitleEvents[0].title,
+          suggestedColorId: inferReverseSyncColorId(event),
+        });
+        continue;
+      }
+
+      createCandidates.push(eventToReversePreviewItem(event));
     }
 
-    if (googleIndexes.byImportKey.has(importKey)) {
-      skipped.push({
-        sheetEventId: event.id,
-        title: event.title,
-        startDate: event.start_date,
-        reason: 'same_date_title_exists',
-      });
-      continue;
-    }
-
-    const sameDateGoogleEvents = googleIndexes.byStartDate.get(event.start_date) ?? [];
-    const differentTitleEvents = sameDateGoogleEvents.filter(
-      (googleEvent) => normalizeImportTitle(googleEvent.title) !== normalizeImportTitle(event.title),
-    );
-    if (differentTitleEvents.length === 1) {
-      updateCandidates.push({
-        sheetEventId: event.id,
-        googleEventId: differentTitleEvents[0].google_event_id,
-        startDate: event.start_date,
-        appTitle: event.title,
-        googleTitle: differentTitleEvents[0].title,
-        suggestedColorId: inferReverseSyncColorId(event),
-      });
-      continue;
-    }
-
-    createCandidates.push(eventToReversePreviewItem(event));
+    return {
+      ok: true,
+      timeMin: range.timeMin,
+      timeMax: range.timeMax,
+      createCandidates,
+      updateCandidates,
+      skipped,
+    };
+  } catch (error) {
+    console.error('[google-reverse-preview] failed', {
+      step,
+      errorMessage: getErrorMessage(error),
+      stack: getErrorStack(error),
+    });
+    return { ok: false, reason: getGooglePreviewFailureReason(step, error) };
   }
-
-  return {
-    ok: true,
-    timeMin: range.timeMin,
-    timeMax: range.timeMax,
-    createCandidates,
-    updateCandidates,
-    skipped,
-  };
 }
 
 // ---- 逆同期実行 アプリ → Google ----

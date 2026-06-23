@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
   if (!canUseMotherGoogleSync(currentUser.role)) {
     return Response.json({
       connected: false,
+      reauthRequired: false,
       lastSyncedAt: null,
       syncDisabled: process.env.DISABLE_GOOGLE_SYNC === 'true',
     });
@@ -31,9 +32,11 @@ export async function GET(request: NextRequest) {
   try {
     const syncMeta = await getAllSyncMeta();
     const token = syncMeta.get('mother_google_refresh_token') ?? null;
+    const reauthRequired = (syncMeta.get('mother_google_auth_status') ?? '') === 'reauth_required';
     const lastSyncedAt = syncMeta.get('mother_google_calendar_last_synced_at') ?? null;
     return Response.json({
-      connected: !!token && token.trim() !== '',
+      connected: !reauthRequired && !!token && token.trim() !== '',
+      reauthRequired,
       lastSyncedAt,
       syncDisabled: process.env.DISABLE_GOOGLE_SYNC === 'true',
     });
