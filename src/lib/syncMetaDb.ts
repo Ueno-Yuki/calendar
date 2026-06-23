@@ -7,11 +7,19 @@ async function ensureSyncMetaSheet(): Promise<void> {
   await ensureSheet(SHEET, HEADERS);
 }
 
-export async function getSyncMeta(key: string): Promise<string | null> {
-  await ensureSyncMetaSheet();
+export async function getAllSyncMeta(): Promise<Map<string, string>> {
   const rows = await getRows(SHEET);
-  const row = rows.find((r) => r.key === key);
-  return row?.value ?? null;
+  const map = new Map<string, string>();
+  rows.forEach((row) => {
+    if (!row.key) return;
+    map.set(row.key, row.value ?? '');
+  });
+  return map;
+}
+
+export async function getSyncMeta(key: string): Promise<string | null> {
+  const map = await getAllSyncMeta();
+  return map.get(key) ?? null;
 }
 
 export async function setSyncMeta(key: string, value: string): Promise<void> {

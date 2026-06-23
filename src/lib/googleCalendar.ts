@@ -33,11 +33,35 @@ export async function exchangeCodeForTokens(
   return { refreshToken: tokens.refresh_token };
 }
 
-export async function getAuthorizedCalendar(): Promise<calendar_v3.Calendar | null> {
-  const refreshToken = await getSyncMeta(REFRESH_TOKEN_KEY);
-  if (!refreshToken) return null;
+export function getStoredGoogleRefreshToken(syncMeta?: Map<string, string>): string | null {
+  const value = syncMeta?.get(REFRESH_TOKEN_KEY) ?? null;
+  return value && value.trim() ? value.trim() : null;
+}
+
+export async function getGoogleAccessToken(refreshToken: string): Promise<string> {
   const client = getOAuth2Client();
   client.setCredentials({ refresh_token: refreshToken });
+  const result = await client.getAccessToken();
+  const accessToken =
+    typeof result === 'object' && result !== null && 'token' in result
+      ? result.token
+      : null;
+  if (!accessToken) {
+    throw new Error('Google access token not returned');
+  }
+  return accessToken;
+}
+
+export async function getAuthorizedCalendar(options?: {
+  refreshToken?: string | null;
+  syncMeta?: Map<string, string>;
+}): Promise<calendar_v3.Calendar | null> {
+  const refreshToken = options?.refreshToken ?? getStoredGoogleRefreshToken(options?.syncMeta) ?? await getSyncMeta(REFRESH_TOKEN_KEY);
+  if (!refreshToken) return null;
+
+  const accessToken = await getGoogleAccessToken(refreshToken);
+  const client = getOAuth2Client();
+  client.setCredentials({ access_token: accessToken, refresh_token: refreshToken });
   return google.calendar({ version: 'v3', auth: client });
 }
 

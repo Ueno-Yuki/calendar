@@ -25,8 +25,25 @@ export async function GET(request: NextRequest) {
 
   try {
     const result = await previewGoogleSync();
-    return Response.json(result);
-  } catch {
-    return Response.json({ ok: false, reason: 'error' }, { status: 500 });
+    if (result.ok) {
+      return Response.json(result);
+    }
+
+    if (result.reason === 'sync_disabled' || result.reason === 'not_connected') {
+      return Response.json(result);
+    }
+
+    if (result.reason === 'quota_exceeded') {
+      return Response.json(result, { status: 429 });
+    }
+
+    return Response.json(result, { status: 500 });
+  } catch (error) {
+    console.error('[google-preview] failed', {
+      step: 'route',
+      errorMessage: error instanceof Error ? error.message : 'unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    return Response.json({ ok: false, reason: 'unknown' }, { status: 500 });
   }
 }

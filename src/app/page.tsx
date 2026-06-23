@@ -35,6 +35,27 @@ interface GoogleStatusResponse {
   syncDisabled: boolean;
 }
 
+function getGooglePreviewErrorMessage(reason: string | undefined): string {
+  switch (reason) {
+    case 'forbidden':
+      return '同期権限がありません';
+    case 'not_connected':
+      return 'Googleカレンダーと連携されていません';
+    case 'google_auth_failed':
+      return 'Google認証の更新に失敗しました。再連携してください';
+    case 'google_scope_missing':
+      return 'Googleカレンダーの権限が不足しています。再連携してください';
+    case 'sheets_read_failed':
+      return '予定データの読み込みに失敗しました。少し待って再試行してください';
+    case 'quota_exceeded':
+      return 'アクセスが集中しています。少し待って再試行してください';
+    case 'sync_disabled':
+      return 'Google同期は停止中です';
+    default:
+      return '同期プレビューに失敗しました';
+  }
+}
+
 interface EventsCacheEntry {
   events: Event[];
   fetchedAt: string;
@@ -687,16 +708,16 @@ export default function CalendarPage() {
 
       if (!res.ok) {
         const reason = data && 'reason' in data ? data.reason : undefined;
-        setGoogleSyncError(reason === 'forbidden' ? '同期権限がありません' : '同期プレビューに失敗しました');
+        setGoogleSyncError(getGooglePreviewErrorMessage(reason));
         return;
       }
 
       if (data && 'reason' in data && data.reason === 'sync_disabled') {
-        setGoogleSyncError('Google同期は停止中です');
+        setGoogleSyncError(getGooglePreviewErrorMessage(data.reason));
         return;
       }
       if (data && 'reason' in data && data.reason === 'not_connected') {
-        setGoogleSyncError('Googleカレンダーが未連携です');
+        setGoogleSyncError(getGooglePreviewErrorMessage(data.reason));
         return;
       }
 
@@ -705,7 +726,7 @@ export default function CalendarPage() {
         setSelectedGoogleEventIds([]);
         setExpandedGoogleCategoryIds([]);
       } else {
-        setGoogleSyncError('同期プレビューに失敗しました');
+        setGoogleSyncError(getGooglePreviewErrorMessage(data && 'reason' in data ? data.reason : undefined));
       }
     } catch {
       setGoogleSyncError('同期プレビューに失敗しました');
