@@ -29,7 +29,11 @@ export async function GET(request: NextRequest) {
       return Response.json(result);
     }
 
-    if (result.reason === 'sync_disabled' || result.reason === 'not_connected') {
+    if (
+      result.reason === 'sync_disabled' ||
+      result.reason === 'not_connected' ||
+      result.reason === 'google_reauth_required'
+    ) {
       return Response.json(result);
     }
 

@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { exchangeCodeForTokens } from '@/lib/googleCalendar';
+import { clearGoogleReauthRequired, exchangeCodeForTokens } from '@/lib/googleCalendar';
 import { setSyncMeta } from '@/lib/syncMetaDb';
 
 // GET /api/auth/google/callback
@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
     const { refreshToken } = await exchangeCodeForTokens(code, redirectUri);
 
     await setSyncMeta('mother_google_refresh_token', refreshToken);
+    await clearGoogleReauthRequired().catch(() => {});
 
     return NextResponse.redirect(new URL('/?google_auth=success', request.url));
   } catch {

@@ -29,6 +29,20 @@ export async function GET(request: NextRequest) {
 
   try {
     const result = await previewGoogleReverseSync();
+    if (
+      'ok' in result &&
+      result.ok === false &&
+      (
+        result.reason === 'sync_disabled' ||
+        result.reason === 'not_connected' ||
+        result.reason === 'google_reauth_required'
+      )
+    ) {
+      return Response.json(result);
+    }
+    if ('ok' in result && result.ok === false && result.reason === 'quota_exceeded') {
+      return Response.json(result, { status: 429 });
+    }
     return Response.json(result);
   } catch {
     return Response.json({ ok: false, reason: 'error' }, { status: 500 });

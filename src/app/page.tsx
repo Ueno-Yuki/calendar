@@ -32,6 +32,7 @@ interface EventsResponse {
 
 interface GoogleStatusResponse {
   connected: boolean;
+  reauthRequired: boolean;
   syncDisabled: boolean;
 }
 
@@ -41,6 +42,8 @@ function getGooglePreviewErrorMessage(reason: string | undefined): string {
       return '同期権限がありません';
     case 'not_connected':
       return 'Googleカレンダーと連携されていません';
+    case 'google_reauth_required':
+      return 'Google連携の有効期限が切れています。再連携してください。';
     case 'google_auth_failed':
       return 'Google認証の更新に失敗しました。再連携してください';
     case 'google_scope_missing':
@@ -239,6 +242,8 @@ export default function CalendarPage() {
   const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
   const [isGooglePreviewLoading, setIsGooglePreviewLoading] = useState(false);
   const [googleSyncDisabled, setGoogleSyncDisabled] = useState(false);
+  const [googleConnected, setGoogleConnected] = useState(true);
+  const [googleReauthRequired, setGoogleReauthRequired] = useState(false);
   const [showGoogleSyncMode, setShowGoogleSyncMode] = useState(false);
   const [googleSyncPreview, setGoogleSyncPreview] = useState<GoogleSyncPreview | null>(null);
   const [selectedGoogleEventIds, setSelectedGoogleEventIds] = useState<string[]>([]);
@@ -283,10 +288,16 @@ export default function CalendarPage() {
       .then((res) => (res.ok ? (res.json() as Promise<GoogleStatusResponse>) : null))
       .then((data) => {
         if (cancelled || !data) return;
-        setGoogleSyncDisabled(!data.connected || data.syncDisabled);
+        setGoogleConnected(data.connected);
+        setGoogleReauthRequired(Boolean(data.reauthRequired));
+        setGoogleSyncDisabled(Boolean(data.syncDisabled));
       })
       .catch(() => {
-        if (!cancelled) setGoogleSyncDisabled(true);
+        if (!cancelled) {
+          setGoogleConnected(false);
+          setGoogleReauthRequired(false);
+          setGoogleSyncDisabled(true);
+        }
       });
 
     return () => {
@@ -692,10 +703,22 @@ export default function CalendarPage() {
     setShowGoogleSyncMode(true);
   }, [currentRole, googleSyncDisabled, isGooglePreviewLoading, isGoogleSyncing]);
 
+  const handleGoogleReconnect = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.location.href = '/api/auth/google';
+  }, []);
+
   const handleImportGoogleSyncRequest = useCallback(async () => {
     if (!canUseGoogleSync(currentRole) || googleSyncDisabled || isGooglePreviewLoading || isGoogleSyncing) return;
+    if (googleReauthRequired) {
+      setGoogleSyncModalError(getGooglePreviewErrorMessage('google_reauth_required'));
+      return;
+    }
+    if (!googleConnected) {
+      setGoogleSyncModalError(getGooglePreviewErrorMessage('not_connected'));
+      return;
+    }
     setIsGooglePreviewLoading(true);
-    setShowGoogleSyncMode(false);
     setGoogleSyncMessage('');
     setGoogleSyncError('');
     setGoogleSyncModalError('');
@@ -708,37 +731,65 @@ export default function CalendarPage() {
 
       if (!res.ok) {
         const reason = data && 'reason' in data ? data.reason : undefined;
-        setGoogleSyncError(getGooglePreviewErrorMessage(reason));
+        if (reason === 'google_reauth_required') {
+          setGoogleConnected(false);
+          setGoogleReauthRequired(true);
+        }
+        setGoogleSyncModalError(getGooglePreviewErrorMessage(reason));
         return;
       }
 
       if (data && 'reason' in data && data.reason === 'sync_disabled') {
-        setGoogleSyncError(getGooglePreviewErrorMessage(data.reason));
+        setGoogleSyncModalError(getGooglePreviewErrorMessage(data.reason));
         return;
       }
-      if (data && 'reason' in data && data.reason === 'not_connected') {
-        setGoogleSyncError(getGooglePreviewErrorMessage(data.reason));
+      if (data && 'reason' in data) {
+        if (data.reason === 'not_connected') {
+          setGoogleConnected(false);
+        }
+        if (data.reason === 'google_reauth_required') {
+          setGoogleConnected(false);
+          setGoogleReauthRequired(true);
+        }
+        setGoogleSyncModalError(getGooglePreviewErrorMessage(data.reason));
         return;
       }
 
       if (data && 'ok' in data && data.ok) {
+        setShowGoogleSyncMode(false);
         setGoogleSyncPreview(data);
         setSelectedGoogleEventIds([]);
         setExpandedGoogleCategoryIds([]);
+        setGoogleConnected(true);
+        setGoogleReauthRequired(false);
       } else {
-        setGoogleSyncError(getGooglePreviewErrorMessage(data && 'reason' in data ? data.reason : undefined));
+        setGoogleSyncModalError(getGooglePreviewErrorMessage(data && 'reason' in data ? data.reason : undefined));
       }
     } catch {
-      setGoogleSyncError('同期プレビューに失敗しました');
+      setGoogleSyncModalError('同期プレビューに失敗しました');
     } finally {
       setIsGooglePreviewLoading(false);
     }
-  }, [currentRole, googleSyncDisabled, isGooglePreviewLoading, isGoogleSyncing]);
+  }, [
+    currentRole,
+    googleConnected,
+    googleReauthRequired,
+    googleSyncDisabled,
+    isGooglePreviewLoading,
+    isGoogleSyncing,
+  ]);
 
   const handleReverseGoogleSyncRequest = useCallback(async () => {
     if (!canUseGoogleSync(currentRole) || googleSyncDisabled || isGooglePreviewLoading || isGoogleSyncing) return;
+    if (googleReauthRequired) {
+      setGoogleSyncModalError(getGooglePreviewErrorMessage('google_reauth_required'));
+      return;
+    }
+    if (!googleConnected) {
+      setGoogleSyncModalError(getGooglePreviewErrorMessage('not_connected'));
+      return;
+    }
     setIsGooglePreviewLoading(true);
-    setShowGoogleSyncMode(false);
     setGoogleSyncMessage('');
     setGoogleSyncError('');
     setGoogleSyncModalError('');
@@ -751,20 +802,34 @@ export default function CalendarPage() {
 
       if (!res.ok) {
         const reason = data && 'reason' in data ? data.reason : undefined;
-        setGoogleSyncError(reason === 'forbidden' ? '同期権限がありません' : '逆同期プレビューに失敗しました');
+        if (reason === 'google_reauth_required') {
+          setGoogleConnected(false);
+          setGoogleReauthRequired(true);
+        }
+        setGoogleSyncModalError(
+          reason === 'forbidden' ? '同期権限がありません' : getGooglePreviewErrorMessage(reason),
+        );
         return;
       }
 
       if (data && 'reason' in data && data.reason === 'sync_disabled') {
-        setGoogleSyncError('Google同期は停止中です');
+        setGoogleSyncModalError('Google同期は停止中です');
         return;
       }
-      if (data && 'reason' in data && data.reason === 'not_connected') {
-        setGoogleSyncError('Googleカレンダーが未連携です');
+      if (data && 'reason' in data) {
+        if (data.reason === 'not_connected') {
+          setGoogleConnected(false);
+        }
+        if (data.reason === 'google_reauth_required') {
+          setGoogleConnected(false);
+          setGoogleReauthRequired(true);
+        }
+        setGoogleSyncModalError(getGooglePreviewErrorMessage(data.reason));
         return;
       }
 
       if (data && 'ok' in data && data.ok) {
+        setShowGoogleSyncMode(false);
         setGoogleReverseSyncPreview(data);
         setSelectedReverseCreateIds([]);
         setSelectedReverseUpdatePairKeys([]);
@@ -774,15 +839,24 @@ export default function CalendarPage() {
         setSelectedReverseUpdateColorIds(
           Object.fromEntries(data.updateCandidates.map((item) => [googleReversePairKey(item), item.suggestedColorId])),
         );
+        setGoogleConnected(true);
+        setGoogleReauthRequired(false);
       } else {
-        setGoogleSyncError('逆同期プレビューに失敗しました');
+        setGoogleSyncModalError('逆同期プレビューに失敗しました');
       }
     } catch {
-      setGoogleSyncError('逆同期プレビューに失敗しました');
+      setGoogleSyncModalError('逆同期プレビューに失敗しました');
     } finally {
       setIsGooglePreviewLoading(false);
     }
-  }, [currentRole, googleSyncDisabled, isGooglePreviewLoading, isGoogleSyncing]);
+  }, [
+    currentRole,
+    googleConnected,
+    googleReauthRequired,
+    googleSyncDisabled,
+    isGooglePreviewLoading,
+    isGoogleSyncing,
+  ]);
 
   const handleToggleGoogleCategory = useCallback((categoryId: string) => {
     if (!googleSyncPreview) return;
@@ -1078,9 +1152,14 @@ export default function CalendarPage() {
       {showGoogleSyncMode && (
         <GoogleSyncModeModal
           loading={isGooglePreviewLoading || isGoogleSyncing}
+          connected={googleConnected}
+          reauthRequired={googleReauthRequired}
+          syncDisabled={googleSyncDisabled}
+          error={googleSyncModalError}
           onClose={() => setShowGoogleSyncMode(false)}
           onImport={handleImportGoogleSyncRequest}
           onReverse={handleReverseGoogleSyncRequest}
+          onReconnect={handleGoogleReconnect}
         />
       )}
       {googleReverseSyncPreview && (
