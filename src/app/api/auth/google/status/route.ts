@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { getCurrentUser, AuthError } from '@/lib/auth';
-import { getSyncMeta } from '@/lib/syncMetaDb';
+import { getAllSyncMeta } from '@/lib/syncMetaDb';
 
 function canUseMotherGoogleSync(role: ReturnType<typeof getCurrentUser>['role']): boolean {
   return role === 'mother' || role === 'me';
@@ -29,10 +29,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const [token, lastSyncedAt] = await Promise.all([
-      getSyncMeta('mother_google_refresh_token'),
-      getSyncMeta('mother_google_calendar_last_synced_at'),
-    ]);
+    const syncMeta = await getAllSyncMeta();
+    const token = syncMeta.get('mother_google_refresh_token') ?? null;
+    const lastSyncedAt = syncMeta.get('mother_google_calendar_last_synced_at') ?? null;
     return Response.json({
       connected: !!token && token.trim() !== '',
       lastSyncedAt,

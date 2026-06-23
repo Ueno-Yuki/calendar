@@ -9,8 +9,14 @@ import {
   getAllMonthSheetNames,
 } from '@/lib/sheets';
 import { parseEventRow, eventToRecord } from '@/lib/eventsDb';
-import { getSyncMeta, setSyncMeta } from '@/lib/syncMetaDb';
-import { createGCalEvent, getAuthorizedCalendar, parseGCalEvent, updateGCalEvent } from '@/lib/googleCalendar';
+import { getAllSyncMeta, getSyncMeta, setSyncMeta } from '@/lib/syncMetaDb';
+import {
+  createGCalEvent,
+  getAuthorizedCalendar,
+  getStoredGoogleRefreshToken,
+  parseGCalEvent,
+  updateGCalEvent,
+} from '@/lib/googleCalendar';
 
 const LAST_SYNCED_KEY = 'mother_google_calendar_last_synced_at';
 const IMPORT_COMPLETED_KEY = 'mother_google_import_completed';
@@ -62,6 +68,18 @@ export interface GoogleSyncPreviewResult {
       colorId: string;
     }>;
   }>;
+}
+
+export interface GoogleSyncPreviewErrorResult {
+  ok: false;
+  reason:
+    | 'sync_disabled'
+    | 'not_connected'
+    | 'google_auth_failed'
+    | 'google_scope_missing'
+    | 'sheets_read_failed'
+    | 'quota_exceeded'
+    | 'unknown';
 }
 
 export interface GoogleSyncDebugResult {
@@ -310,6 +328,74 @@ function getGoogleApiErrorResponse(error: unknown): unknown {
   if (!error || typeof error !== 'object') return undefined;
   const maybeError = error as { response?: { data?: unknown } };
   return maybeError.response?.data;
+}
+
+function getApiErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const maybeError = error as { code?: number; response?: { status?: number } };
+  return maybeError.response?.status ?? maybeError.code;
+}
+
+function getApiErrorBodyMessage(error: unknown): string {
+  if (!error || typeof error !== 'object') return '';
+  const maybeError = error as {
+    message?: string;
+    response?: { data?: { error?: { message?: string } } };
+  };
+  return maybeError.response?.data?.error?.message ?? maybeError.message ?? '';
+}
+
+function isQuotaExceededError(error: unknown): boolean {
+  const status = getApiErrorStatus(error);
+  const message = getApiErrorBodyMessage(error).toLowerCase();
+  return (
+    status === 429 ||
+    message.includes('quota exceeded') ||
+    message.includes('read requests per minute') ||
+    message.includes('rate limit exceeded')
+  );
+}
+
+function isGoogleScopeMissingError(error: unknown): boolean {
+  const message = getApiErrorBodyMessage(error).toLowerCase();
+  return message.includes('insufficient authentication scopes') || message.includes('insufficientpermissions');
+}
+
+function isGoogleAuthFailedError(error: unknown): boolean {
+  const status = getApiErrorStatus(error);
+  const message = getApiErrorBodyMessage(error).toLowerCase();
+  return (
+    status === 401 ||
+    message.includes('invalid_grant') ||
+    message.includes('invalid credentials') ||
+    message.includes('token has been expired or revoked')
+  );
+}
+
+type GooglePreviewStep =
+  | 'read_sync_meta'
+  | 'refresh_google_token'
+  | 'fetch_google_events'
+  | 'read_existing_events'
+  | 'build_preview';
+
+function getGooglePreviewFailureReason(
+  step: GooglePreviewStep,
+  error: unknown,
+): GoogleSyncPreviewErrorResult['reason'] {
+  if (isQuotaExceededError(error)) return 'quota_exceeded';
+  if (step === 'refresh_google_token') {
+    if (isGoogleScopeMissingError(error)) return 'google_scope_missing';
+    if (isGoogleAuthFailedError(error)) return 'google_auth_failed';
+  }
+  if (step === 'fetch_google_events') {
+    if (isGoogleScopeMissingError(error)) return 'google_scope_missing';
+    if (isGoogleAuthFailedError(error)) return 'google_auth_failed';
+  }
+  if (step === 'read_sync_meta' || step === 'read_existing_events') {
+    return 'sheets_read_failed';
+  }
+  return 'unknown';
 }
 
 function normalizeReverseSyncColorId(colorId: string | undefined): string {
@@ -870,96 +956,118 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
 // ---- Google同期プレビュー ----
 // 現在日時から当年末までのGoogle予定を取得し、Event.colorIdごとに件数を返す。
 
-export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | SyncResult> {
+export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | GoogleSyncPreviewErrorResult> {
   if (isSyncDisabled()) {
-    return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'sync_disabled' };
+    return { ok: false, reason: 'sync_disabled' };
   }
 
-  const calendar = await getAuthorizedCalendar();
-  if (!calendar) {
-    return { synced: false, added: 0, updated: 0, deleted: 0, syncedAt: '', reason: 'not_connected' };
-  }
+  let step: GooglePreviewStep = 'read_sync_meta';
 
-  const { timeMin, timeMax } = currentJstToYearEndRange();
-  const items = await listGCalItems(calendar, {
-    calendarId: CALENDAR_ID(),
-    timeMin,
-    timeMax,
-    singleEvents: true,
-    maxResults: 2500,
-    showDeleted: true,
-  });
-
-  const existingImportKeys = await buildExistingImportKeySet();
-  type CategoryGroup = GoogleSyncPreviewResult['categories'][number];
-  const groups = new Map<string, CategoryGroup>();
-  let validEvents = 0;
-  let cancelled = 0;
-  let alreadyImported = 0;
-
-  for (const item of items) {
-    if (item.status === 'cancelled') {
-      cancelled++;
-      continue;
+  try {
+    const syncMeta = await getAllSyncMeta();
+    const refreshToken = getStoredGoogleRefreshToken(syncMeta);
+    if (!refreshToken) {
+      return { ok: false, reason: 'not_connected' };
     }
-    const parsed = parseGCalEvent(item);
-    if (!parsed || !item.id) continue;
 
-    validEvents++;
-    const colorId = getEventColorId(item);
-    const category = getGoogleCategory(colorId);
-    const group = groups.get(category.categoryId) ?? {
-      categoryId: category.categoryId,
-      label: category.label,
-      icon: category.icon,
-      colorIds: category.colorIds,
-      count: 0,
-      alreadyImported: 0,
-      selectableCount: 0,
-      events: [],
-    };
-    group.count++;
-    const importKey = buildImportKey(parsed.start_date, parsed.title);
-    if (existingImportKeys.has(importKey)) {
-      alreadyImported++;
-      group.alreadyImported++;
-      groups.set(category.categoryId, group);
-      continue;
+    step = 'refresh_google_token';
+    const calendar = await getAuthorizedCalendar({ refreshToken, syncMeta });
+    if (!calendar) {
+      return { ok: false, reason: 'not_connected' };
     }
-    group.selectableCount++;
-    group.events.push({
-      googleEventId: item.id,
-      title: parsed.title,
-      start: parsed.start_date,
-      end: parsed.end_date,
-      startTime: parsed.start_time,
-      endTime: parsed.end_time,
-      allDay: parsed.all_day,
-      colorId,
+
+    step = 'fetch_google_events';
+    const { timeMin, timeMax } = currentJstToYearEndRange();
+    const items = await listGCalItems(calendar, {
+      calendarId: CALENDAR_ID(),
+      timeMin,
+      timeMax,
+      singleEvents: true,
+      maxResults: 2500,
+      showDeleted: true,
     });
-    groups.set(category.categoryId, group);
-  }
 
-  return {
-    ok: true,
-    timeMin,
-    timeMax,
-    totalFetched: items.length,
-    validEvents,
-    cancelled,
-    alreadyImported,
-    selectable: validEvents - alreadyImported,
-    categories: [...groups.values()].sort((a, b) => {
-      const aIndex = GOOGLE_CATEGORY_DEFINITIONS.findIndex((category) => category.categoryId === a.categoryId);
-      const bIndex = GOOGLE_CATEGORY_DEFINITIONS.findIndex((category) => category.categoryId === b.categoryId);
-      if (aIndex !== -1 || bIndex !== -1) {
-        if (aIndex === -1) return 1;
-        if (bIndex === -1) return -1;
-        return aIndex - bIndex;
+    step = 'read_existing_events';
+    const existingImportKeys = await buildExistingImportKeySet();
+
+    step = 'build_preview';
+    type CategoryGroup = GoogleSyncPreviewResult['categories'][number];
+    const groups = new Map<string, CategoryGroup>();
+    let validEvents = 0;
+    let cancelled = 0;
+    let alreadyImported = 0;
+
+    for (const item of items) {
+      if (item.status === 'cancelled') {
+        cancelled++;
+        continue;
       }
-      return a.label.localeCompare(b.label, 'ja');
-    }),
-  };
+      const parsed = parseGCalEvent(item);
+      if (!parsed || !item.id) continue;
+
+      validEvents++;
+      const colorId = getEventColorId(item);
+      const category = getGoogleCategory(colorId);
+      const group = groups.get(category.categoryId) ?? {
+        categoryId: category.categoryId,
+        label: category.label,
+        icon: category.icon,
+        colorIds: category.colorIds,
+        count: 0,
+        alreadyImported: 0,
+        selectableCount: 0,
+        events: [],
+      };
+      group.count++;
+      const importKey = buildImportKey(parsed.start_date, parsed.title);
+      if (existingImportKeys.has(importKey)) {
+        alreadyImported++;
+        group.alreadyImported++;
+        groups.set(category.categoryId, group);
+        continue;
+      }
+      group.selectableCount++;
+      group.events.push({
+        googleEventId: item.id,
+        title: parsed.title,
+        start: parsed.start_date,
+        end: parsed.end_date,
+        startTime: parsed.start_time,
+        endTime: parsed.end_time,
+        allDay: parsed.all_day,
+        colorId,
+      });
+      groups.set(category.categoryId, group);
+    }
+
+    return {
+      ok: true,
+      timeMin,
+      timeMax,
+      totalFetched: items.length,
+      validEvents,
+      cancelled,
+      alreadyImported,
+      selectable: validEvents - alreadyImported,
+      categories: [...groups.values()].sort((a, b) => {
+        const aIndex = GOOGLE_CATEGORY_DEFINITIONS.findIndex((category) => category.categoryId === a.categoryId);
+        const bIndex = GOOGLE_CATEGORY_DEFINITIONS.findIndex((category) => category.categoryId === b.categoryId);
+        if (aIndex !== -1 || bIndex !== -1) {
+          if (aIndex === -1) return 1;
+          if (bIndex === -1) return -1;
+          return aIndex - bIndex;
+        }
+        return a.label.localeCompare(b.label, 'ja');
+      }),
+    };
+  } catch (error) {
+    console.error('[google-preview] failed', {
+      step,
+      errorMessage: getErrorMessage(error),
+      stack: getErrorStack(error),
+    });
+    return { ok: false, reason: getGooglePreviewFailureReason(step, error) };
+  }
 }
 
 // ---- 逆同期プレビュー アプリ → Google ----
