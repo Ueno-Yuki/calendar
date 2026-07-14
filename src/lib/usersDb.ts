@@ -1,4 +1,4 @@
-import { getRows, appendRow, updateRow, ensureSheet } from '@/lib/sheets';
+import { getRows, appendRowByHeaders, updateRowByHeaders, ensureSheet } from '@/lib/sheets';
 import type { FamilyRole } from '@/types';
 import {
   DEFAULT_QUIET_HOURS,
@@ -78,36 +78,40 @@ export async function upsertNotificationSettings(
   await ensureUsersSheet();
   const found = await findUserRow(role);
   const now = new Date().toISOString();
-  const b = (v: boolean) => (v ? 'TRUE' : 'FALSE');
 
   if (!found) {
-    await appendRow(SHEET, [
-      role, '', role, '',
-      b(settings.notification_enabled),
-      b(settings.daily_summary_enabled),
-      b(settings.instant_event_created_enabled),
-      b(settings.instant_event_deleted_enabled),
-      now, now,
-      b(settings.quiet_hours_enabled),
-      settings.quiet_hours_start,
-      settings.quiet_hours_end,
-    ]);
+    await appendRowByHeaders(SHEET, {
+      user_id: role,
+      name: '',
+      family_role: role,
+      token: '',
+      notification_enabled: settings.notification_enabled,
+      daily_summary_enabled: settings.daily_summary_enabled,
+      instant_event_created_enabled: settings.instant_event_created_enabled,
+      instant_event_deleted_enabled: settings.instant_event_deleted_enabled,
+      created_at: now,
+      updated_at: now,
+      quiet_hours_enabled: settings.quiet_hours_enabled,
+      quiet_hours_start: settings.quiet_hours_start,
+      quiet_hours_end: settings.quiet_hours_end,
+    });
   } else {
     const { row, idx } = found;
-    await updateRow(SHEET, idx, [
-      row.user_id || role,
-      row.name || '',
-      row.family_role || role,
-      row.token || '',
-      b(settings.notification_enabled),
-      b(settings.daily_summary_enabled),
-      b(settings.instant_event_created_enabled),
-      b(settings.instant_event_deleted_enabled),
-      row.created_at || now,
-      now,
-      b(settings.quiet_hours_enabled),
-      settings.quiet_hours_start,
-      settings.quiet_hours_end,
-    ]);
+    await updateRowByHeaders(SHEET, idx, {
+      ...row,
+      user_id: row.user_id || role,
+      name: row.name || '',
+      family_role: row.family_role || role,
+      token: row.token || '',
+      notification_enabled: settings.notification_enabled,
+      daily_summary_enabled: settings.daily_summary_enabled,
+      instant_event_created_enabled: settings.instant_event_created_enabled,
+      instant_event_deleted_enabled: settings.instant_event_deleted_enabled,
+      created_at: row.created_at || now,
+      updated_at: now,
+      quiet_hours_enabled: settings.quiet_hours_enabled,
+      quiet_hours_start: settings.quiet_hours_start,
+      quiet_hours_end: settings.quiet_hours_end,
+    });
   }
 }
