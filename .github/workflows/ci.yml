@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -29,3 +32,22 @@ jobs:
       - run: npx tsc --noEmit
 
       - run: npm run build
+
+  auto-merge-to-main:
+    needs: verify
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Merge branch into main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin "${GITHUB_REF_NAME}"
+          git merge --no-ff "origin/${GITHUB_REF_NAME}" -m "Merge branch '${GITHUB_REF_NAME}' into main (auto)"
+          git push origin main
