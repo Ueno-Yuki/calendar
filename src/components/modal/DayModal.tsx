@@ -8,6 +8,7 @@ import { FAMILY_COLORS } from '@/lib/colors';
 import { STORAGE_KEY } from '@/lib/auth';
 import type { StoredUser } from '@/lib/auth';
 import { apiFetch } from '@/lib/apiClient';
+import { getHolidaysForMonth } from '@/lib/holidays';
 import EventCreateForm from './EventCreateForm';
 import DeleteConfirmModal from './DeleteConfirmModal';
 
@@ -68,7 +69,11 @@ export default function DayModal({
   const date = new Date(`${dateStr}T00:00:00`);
   const dow = date.getDay();
   const dowColorClass = dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-zinc-900';
-  const heading = `${date.getMonth() + 1}月${date.getDate()}日 ${DOW_FULL[dow]}`;
+  const holidayName = useMemo(() => {
+    const [yearStr, monthStr] = dateStr.split('-');
+    return getHolidaysForMonth(Number(yearStr), Number(monthStr)).get(dateStr) ?? '';
+  }, [dateStr]);
+  const heading = `${date.getMonth() + 1}月${date.getDate()}日 ${DOW_FULL[dow]}${holidayName ? `（${holidayName}）` : ''}`;
 
   const dayEvents = useMemo(
     () => events.filter((e) => !e.deleted && e.start_date <= dateStr && e.end_date >= dateStr),

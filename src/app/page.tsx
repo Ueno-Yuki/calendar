@@ -34,6 +34,7 @@ interface GoogleStatusResponse {
   connected: boolean;
   reauthRequired: boolean;
   syncDisabled: boolean;
+  lastSyncedAt?: string | null;
 }
 
 function getGooglePreviewErrorMessage(reason: string | undefined): string {
@@ -57,6 +58,22 @@ function getGooglePreviewErrorMessage(reason: string | undefined): string {
     default:
       return '同期プレビューに失敗しました';
   }
+}
+
+function readGoogleAuthParam(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  return params.get('google_auth');
+}
+
+function clearGoogleAuthParam(): void {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('google_auth')) return;
+  url.searchParams.delete('google_auth');
+  const nextSearch = url.searchParams.toString();
+  const nextUrl = `${url.pathname}${nextSearch ? `?${nextSearch}` : ''}${url.hash}`;
+  window.history.replaceState({}, '', nextUrl);
 }
 
 interface EventsCacheEntry {
@@ -256,6 +273,7 @@ export default function CalendarPage() {
   const [googleSyncMessage, setGoogleSyncMessage] = useState('');
   const [googleSyncError, setGoogleSyncError] = useState('');
   const [googleSyncModalError, setGoogleSyncModalError] = useState('');
+  const googleAuthParamHandledRef = useRef(false);
 
   // refでクロージャ内から最新状態を参照する
   const eventsRef = useRef<Event[]>([]);
@@ -278,32 +296,48 @@ export default function CalendarPage() {
     return () => window.clearTimeout(timer);
   }, []);
 
+  const refreshGoogleStatus = useCallback(async (): Promise<GoogleStatusResponse | null> => {
+    if (!canUseGoogleSync(readCurrentRole())) {
+      setGoogleConnected(false);
+      setGoogleReauthRequired(false);
+      setGoogleSyncDisabled(false);
+      return null;
+    }
+
+    try {
+      const res = await apiFetch('/api/auth/google/status');
+      if (!res.ok) throw new Error(`status=${res.status}`);
+      const data = (await res.json()) as GoogleStatusResponse;
+      setGoogleConnected(Boolean(data.connected));
+      setGoogleReauthRequired(Boolean(data.reauthRequired));
+      setGoogleSyncDisabled(Boolean(data.syncDisabled));
+      return data;
+    } catch {
+      setGoogleConnected(false);
+      setGoogleReauthRequired(false);
+      setGoogleSyncDisabled(true);
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     if (!canUseGoogleSync(currentRole)) {
       return;
     }
+    void refreshGoogleStatus();
+  }, [currentRole, refreshGoogleStatus]);
 
-    let cancelled = false;
-    apiFetch('/api/auth/google/status')
-      .then((res) => (res.ok ? (res.json() as Promise<GoogleStatusResponse>) : null))
-      .then((data) => {
-        if (cancelled || !data) return;
-        setGoogleConnected(data.connected);
-        setGoogleReauthRequired(Boolean(data.reauthRequired));
-        setGoogleSyncDisabled(Boolean(data.syncDisabled));
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setGoogleConnected(false);
-          setGoogleReauthRequired(false);
-          setGoogleSyncDisabled(true);
-        }
-      });
+  useEffect(() => {
+    if (!canUseGoogleSync(currentRole)) return;
+    if (googleAuthParamHandledRef.current) return;
+    const googleAuth = readGoogleAuthParam();
+    if (!googleAuth) return;
 
-    return () => {
-      cancelled = true;
-    };
-  }, [currentRole]);
+    googleAuthParamHandledRef.current = true;
+    void refreshGoogleStatus().finally(() => {
+      clearGoogleAuthParam();
+    });
+  }, [currentRole, refreshGoogleStatus]);
 
   useEffect(() => {
     isRefreshBlockedRef.current = isRefreshBlocked;
@@ -701,7 +735,8 @@ export default function CalendarPage() {
     setGoogleSyncError('');
     setGoogleSyncModalError('');
     setShowGoogleSyncMode(true);
-  }, [currentRole, googleSyncDisabled, isGooglePreviewLoading, isGoogleSyncing]);
+    void refreshGoogleStatus();
+  }, [currentRole, googleSyncDisabled, isGooglePreviewLoading, isGoogleSyncing, refreshGoogleStatus]);
 
   const handleGoogleReconnect = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -732,8 +767,7 @@ export default function CalendarPage() {
       if (!res.ok) {
         const reason = data && 'reason' in data ? data.reason : undefined;
         if (reason === 'google_reauth_required') {
-          setGoogleConnected(false);
-          setGoogleReauthRequired(true);
+          await refreshGoogleStatus();
         }
         setGoogleSyncModalError(getGooglePreviewErrorMessage(reason));
         return;
@@ -748,8 +782,7 @@ export default function CalendarPage() {
           setGoogleConnected(false);
         }
         if (data.reason === 'google_reauth_required') {
-          setGoogleConnected(false);
-          setGoogleReauthRequired(true);
+          await refreshGoogleStatus();
         }
         setGoogleSyncModalError(getGooglePreviewErrorMessage(data.reason));
         return;
@@ -777,6 +810,7 @@ export default function CalendarPage() {
     googleSyncDisabled,
     isGooglePreviewLoading,
     isGoogleSyncing,
+    refreshGoogleStatus,
   ]);
 
   const handleReverseGoogleSyncRequest = useCallback(async () => {
@@ -803,8 +837,7 @@ export default function CalendarPage() {
       if (!res.ok) {
         const reason = data && 'reason' in data ? data.reason : undefined;
         if (reason === 'google_reauth_required') {
-          setGoogleConnected(false);
-          setGoogleReauthRequired(true);
+          await refreshGoogleStatus();
         }
         setGoogleSyncModalError(
           reason === 'forbidden' ? '同期権限がありません' : getGooglePreviewErrorMessage(reason),
@@ -821,8 +854,7 @@ export default function CalendarPage() {
           setGoogleConnected(false);
         }
         if (data.reason === 'google_reauth_required') {
-          setGoogleConnected(false);
-          setGoogleReauthRequired(true);
+          await refreshGoogleStatus();
         }
         setGoogleSyncModalError(getGooglePreviewErrorMessage(data.reason));
         return;
@@ -856,6 +888,7 @@ export default function CalendarPage() {
     googleSyncDisabled,
     isGooglePreviewLoading,
     isGoogleSyncing,
+    refreshGoogleStatus,
   ]);
 
   const handleToggleGoogleCategory = useCallback((categoryId: string) => {
@@ -1089,6 +1122,7 @@ export default function CalendarPage() {
         showGoogleSync={canUseGoogleSync(currentRole)}
         isGoogleSyncing={isGooglePreviewLoading || isGoogleSyncing}
         googleSyncDisabled={googleSyncDisabled}
+        googleSyncNeedsAttention={googleReauthRequired}
         onTodayPress={handleGoToToday}
         onGoogleSync={handleHeaderGoogleSync}
         onRefresh={handleManualRefresh}

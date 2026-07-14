@@ -25,7 +25,10 @@ export default function GoogleSyncModeModal({
   onReverse,
   onReconnect,
 }: Props) {
-  const actionsDisabled = loading || syncDisabled || !connected || reauthRequired;
+  const isReauthState = reauthRequired;
+  const isDisconnectedState = !connected && !reauthRequired;
+  const showActionButtons = !syncDisabled && connected && !reauthRequired;
+  const actionsDisabled = loading || syncDisabled;
 
   return (
     <>
@@ -55,7 +58,7 @@ export default function GoogleSyncModeModal({
             </div>
           )}
 
-          {reauthRequired && (
+          {isReauthState && (
             <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-3">
               <p className="text-sm font-medium text-red-600">
                 Google連携の有効期限が切れています。再連携してください。
@@ -71,7 +74,7 @@ export default function GoogleSyncModeModal({
             </div>
           )}
 
-          {!reauthRequired && !connected && !syncDisabled && (
+          {isDisconnectedState && !syncDisabled && (
             <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3">
               <p className="text-sm font-medium text-zinc-700">Googleカレンダーと連携されていません</p>
               <button
@@ -85,35 +88,39 @@ export default function GoogleSyncModeModal({
             </div>
           )}
 
-          {error && (
+          {error && !isReauthState && !isDisconnectedState && !syncDisabled && (
             <p className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
               {error}
             </p>
           )}
 
-          <button
-            type="button"
-            onClick={onImport}
-            disabled={actionsDisabled}
-            className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left active:bg-zinc-50 disabled:opacity-50"
-          >
-            <p className="text-sm font-semibold text-zinc-900">Googleカレンダーから取り込む</p>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-              Googleカレンダーの予定を家族カレンダーへ取り込みます
-            </p>
-          </button>
+          {showActionButtons && (
+            <>
+              <button
+                type="button"
+                onClick={onImport}
+                disabled={actionsDisabled}
+                className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left active:bg-zinc-50 disabled:opacity-50"
+              >
+                <p className="text-sm font-semibold text-zinc-900">Googleカレンダーから取り込む</p>
+                <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                  Googleカレンダーの予定を家族カレンダーへ取り込みます
+                </p>
+              </button>
 
-          <button
-            type="button"
-            onClick={onReverse}
-            disabled={actionsDisabled}
-            className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left active:bg-zinc-50 disabled:opacity-50"
-          >
-            <p className="text-sm font-semibold text-zinc-900">アプリの予定をGoogleへ反映</p>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-              家族カレンダーにある予定をGoogleカレンダーへ登録します
-            </p>
-          </button>
+              <button
+                type="button"
+                onClick={onReverse}
+                disabled={actionsDisabled}
+                className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left active:bg-zinc-50 disabled:opacity-50"
+              >
+                <p className="text-sm font-semibold text-zinc-900">アプリの予定をGoogleへ反映</p>
+                <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                  家族カレンダーにある予定をGoogleカレンダーへ登録します
+                </p>
+              </button>
+            </>
+          )}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-4 py-3">

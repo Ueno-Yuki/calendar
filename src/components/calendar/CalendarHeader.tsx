@@ -14,6 +14,7 @@ interface Props {
   showGoogleSync?: boolean;
   isGoogleSyncing?: boolean;
   googleSyncDisabled?: boolean;
+  googleSyncNeedsAttention?: boolean;
   onTodayPress?: () => void;
   onRefresh?: () => void;
   onGoogleSync?: () => void;
@@ -32,6 +33,7 @@ export default function CalendarHeader({
   showGoogleSync = false,
   isGoogleSyncing = false,
   googleSyncDisabled = false,
+  googleSyncNeedsAttention = false,
   onTodayPress,
   onRefresh,
   onGoogleSync,
@@ -82,9 +84,14 @@ export default function CalendarHeader({
             aria-label="Googleカレンダー同期"
             onClick={onGoogleSync}
             disabled={googleSyncDisabled || isGoogleSyncing}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold text-zinc-500 hover:border-zinc-300 hover:text-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="relative flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold text-zinc-500 hover:border-zinc-300 hover:text-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <GoogleSyncIcon className={isGoogleSyncing ? 'animate-pulse' : ''} />
+            {googleSyncNeedsAttention && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
+                i
+              </span>
+            )}
           </button>
         )}
         <button
