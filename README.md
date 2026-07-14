@@ -192,31 +192,3 @@ http://localhost:3000
 ```bash
 cp .env.local.example .env.local
 ```
-
----
-
-## Environment Notes
-
-このプロジェクトは以下のカテゴリの設定を利用します。
-
-- Google Sheets API credentials
-- Google OAuth credentials
-- Google Calendar target settings
-- Web Push VAPID keys
-- family-specific access tokens
-
-実値は README には記載していません。  
-Private repository 内でも、秘密情報は `.env.local` / Vercel Environment Variables で管理してください。
-
----
-
-## Product Constraints
-
-このアプリは MVP として、以下を意図的にスコープ外にしています。
-
-- 汎用的なユーザー管理
-- 複数グループ対応
-- 検索
-- CSV 出力
-- LINE 連携
-- 高度な権限制御
