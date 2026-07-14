@@ -6,8 +6,8 @@ export interface QuietHoursSettings {
 
 export const DEFAULT_QUIET_HOURS: QuietHoursSettings = {
   quiet_hours_enabled: true,
-  quiet_hours_start: '22:00',
-  quiet_hours_end: '07:59',
+  quiet_hours_start: '23:59',
+  quiet_hours_end: '05:59',
 };
 
 const TIME_RE = /^\d{2}:\d{2}$/;
