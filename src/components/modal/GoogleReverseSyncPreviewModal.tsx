@@ -61,23 +61,6 @@ const REVERSE_SYNC_CATEGORY_OPTIONS = [
   { value: '5', label: 'かっぱ' },
 ] as const;
 
-function getSkippedReasonLabel(reason: string): string {
-  switch (reason) {
-    case 'same_date_title_exists':
-      return '既にGoogleに同じ日付・タイトルの予定があります';
-    case 'only_google_color_diff_or_unchanged':
-      return 'google_color_id のみの差分です';
-    case 'not_target_user':
-      return '対象外ユーザーです';
-    case 'out_of_range':
-      return '過去予定または対象期間外です';
-    case 'linked_google_event_not_found':
-      return '紐づいているGoogle予定が見つかりません';
-    default:
-      return reason;
-  }
-}
-
 function formatDateTime(event: GoogleReverseCreateCandidate): string {
   const date = event.startDate.replaceAll('-', '/');
   if (event.allDay || !event.startTime) return date;
@@ -246,22 +229,6 @@ export default function GoogleReverseSyncPreviewModal({
                   </label>
                 );
               })}
-            </div>
-          </section>
-
-          <section>
-            <p className="text-sm font-semibold text-zinc-900">スキップ {preview.skipped.length}件</p>
-            <div className="mt-2 space-y-2">
-              {preview.skipped.length === 0 && (
-                <p className="rounded-xl bg-zinc-50 px-3 py-3 text-xs text-zinc-400">スキップはありません</p>
-              )}
-              {preview.skipped.map((item) => (
-                <div key={`${item.sheetEventId}::${item.reason}`} className="rounded-xl bg-zinc-50 px-3 py-2">
-                  <p className="truncate text-sm font-medium text-zinc-700">{item.title}</p>
-                  <p className="mt-1 text-xs text-zinc-400">{item.startDate.replaceAll('-', '/')}</p>
-                  <p className="mt-1 text-xs text-zinc-500">{getSkippedReasonLabel(item.reason)}</p>
-                </div>
-              ))}
             </div>
           </section>
         </div>
