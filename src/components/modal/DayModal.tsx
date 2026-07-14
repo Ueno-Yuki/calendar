@@ -68,12 +68,12 @@ export default function DayModal({
 
   const date = new Date(`${dateStr}T00:00:00`);
   const dow = date.getDay();
-  const dowColorClass = dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-zinc-900';
   const holidayName = useMemo(() => {
     const [yearStr, monthStr] = dateStr.split('-');
     return getHolidaysForMonth(Number(yearStr), Number(monthStr)).get(dateStr) ?? '';
   }, [dateStr]);
-  const heading = `${date.getMonth() + 1}月${date.getDate()}日 ${DOW_FULL[dow]}${holidayName ? `（${holidayName}）` : ''}`;
+  const dowColorClass = holidayName ? 'text-red-500' : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-zinc-900';
+  const heading = `${date.getMonth() + 1}月${date.getDate()}日 ${DOW_FULL[dow]}`;
 
   const dayEvents = useMemo(
     () => events.filter((e) => !e.deleted && e.start_date <= dateStr && e.end_date >= dateStr),
@@ -277,9 +277,14 @@ export default function DayModal({
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <p className="text-xs font-medium text-zinc-400">予定一覧</p>
-                  <h2 className={`mt-1 text-[28px] font-semibold leading-tight ${dowColorClass}`}>
+                  <h2 className={`mt-1 text-[24px] font-semibold leading-tight ${dowColorClass}`}>
                     {heading}
                   </h2>
+                  {holidayName && (
+                    <p className="mt-1 text-sm font-semibold leading-tight text-red-500">
+                      {holidayName}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 pt-0.5">
                   <button
