@@ -47,11 +47,6 @@ export default function CalendarWeekRow({ weekData, onDayPress }: Props) {
               >
                 {dayNum}
               </span>
-              {day.holidayName && day.isCurrentMonth && (
-                <span className="text-[8px] text-red-500 leading-3 w-full text-center truncate px-px">
-                  {day.holidayName}
-                </span>
-              )}
             </button>
           );
         })}
