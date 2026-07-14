@@ -105,7 +105,11 @@ export default function TimePickerSheet({
                   <button
                     ref={hour === selectedHour ? hourRef : undefined}
                     type="button"
-                    onClick={() => { setSelectedHour(hour); setIsLastSelected(false); }}
+                    onClick={(e) => {
+                      setSelectedHour(hour);
+                      setIsLastSelected(false);
+                      e.currentTarget.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                    }}
                     className={`w-full py-3.5 text-base text-center transition-colors ${
                       isSel
                         ? 'font-semibold text-zinc-900 bg-zinc-50'
@@ -133,7 +137,11 @@ export default function TimePickerSheet({
                   <button
                     ref={minute === selectedMinute ? minuteRef : undefined}
                     type="button"
-                    onClick={() => { setSelectedMinute(minute); setIsLastSelected(false); }}
+                    onClick={(e) => {
+                      setSelectedMinute(minute);
+                      setIsLastSelected(false);
+                      e.currentTarget.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                    }}
                     className={`w-full py-3.5 text-base text-center transition-colors ${
                       isSel
                         ? 'font-semibold text-zinc-900 bg-zinc-50'
