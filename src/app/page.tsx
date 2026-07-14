@@ -324,6 +324,7 @@ export default function CalendarPage() {
     if (!canUseGoogleSync(currentRole)) {
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- currentRole変化時にGoogle連携状態をサーバーから再取得するデータフェッチEffect
     void refreshGoogleStatus();
   }, [currentRole, refreshGoogleStatus]);
 
@@ -334,6 +335,7 @@ export default function CalendarPage() {
     if (!googleAuth) return;
 
     googleAuthParamHandledRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Google認証リダイレクト直後の連携状態再取得データフェッチEffect
     void refreshGoogleStatus().finally(() => {
       clearGoogleAuthParam();
     });
