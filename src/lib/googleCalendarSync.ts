@@ -23,7 +23,6 @@ const IMPORT_COMPLETED_KEY = 'mother_google_import_completed';
 const SYNC_LOCK_KEY = 'mother_google_sync_lock';
 const LOCK_TTL_MS = 5 * 60 * 1000; // 5分
 const CALENDAR_ID = () => process.env.GOOGLE_CALENDAR_ID_MOTHER ?? 'primary';
-const SYNC_COLOR_IDS = () => process.env.GOOGLE_SYNC_COLOR_IDS_MOTHER ?? '';
 
 // DISABLE_GOOGLE_SYNC=true で全同期処理を停止できる（重複発生時の緊急停止用）
 function isSyncDisabled(): boolean {
@@ -164,18 +163,24 @@ type GoogleCategoryDefinition = {
   colorIds: string[];
 };
 
-const GOOGLE_CATEGORY_DEFINITIONS: GoogleCategoryDefinition[] = [
-  { categoryId: 'salon', label: 'サロン', icon: '🟦', colorIds: ['default'] },
-  { categoryId: 'birthday', label: '誕生日', icon: '🎂', colorIds: ['10', '3'] },
-  { categoryId: 'personal', label: '個人の予定', icon: '🟪', colorIds: ['11'] },
-  { categoryId: 'kappa', label: 'かっぱ', icon: '🟨', colorIds: ['5'] },
-];
+// Google Calendar の固定 colorId 列挙（Googleの標準色名）。
+// Google側のenumなのでメンテナンス不要。未知のcolorIdは通常発生しない。
+const GOOGLE_STANDARD_COLOR_LABELS: Record<string, string> = {
+  default: 'デフォルト',
+  '1': 'ラベンダー',
+  '2': 'セージ',
+  '3': 'ブドウ',
+  '4': 'フラミンゴ',
+  '5': 'バナナ',
+  '6': 'マンダリン',
+  '7': 'ピーコック',
+  '8': 'グラファイト',
+  '9': 'ブルーベリー',
+  '10': 'バジル',
+  '11': 'トマト',
+};
 
-const GOOGLE_CATEGORY_BY_COLOR_ID = new Map<string, GoogleCategoryDefinition>(
-  GOOGLE_CATEGORY_DEFINITIONS.flatMap((category) =>
-    category.colorIds.map((colorId) => [colorId, category] as const),
-  ),
-);
+const GOOGLE_COLOR_ID_ORDER = ['default', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'];
 
 const REVERSE_SYNC_COLOR_OPTIONS = [
   { colorId: 'default', label: 'サロン' },
@@ -189,7 +194,7 @@ const REVERSE_SYNC_ALLOWED_COLOR_IDS: Set<string> = new Set(
 );
 
 function getGoogleCategory(colorId: string): GoogleCategoryDefinition {
-  return GOOGLE_CATEGORY_BY_COLOR_ID.get(colorId) ?? {
+  return {
     categoryId: `color-${colorId}`,
     label: getColorLabel(colorId),
     icon: '',
@@ -203,21 +208,6 @@ function normalizeImportTitle(title: string): string {
 
 function buildImportKey(startDate: string, title: string): string {
   return `${startDate}::${normalizeImportTitle(title)}`;
-}
-
-function normalizeColorIds(colorIds: string[] | undefined): string[] {
-  if (!colorIds) {
-    return SYNC_COLOR_IDS()
-      .split(',')
-      .map((id) => id.trim())
-      .filter(Boolean);
-  }
-  return colorIds.map((id) => id.trim()).filter(Boolean);
-}
-
-function getSyncColorIdSet(colorIds?: string[]): Set<string> | null {
-  const ids = normalizeColorIds(colorIds);
-  return ids.length > 0 ? new Set(ids) : null;
 }
 
 function getRequiredSyncColorIdSet(colorIds: string[]): Set<string> {
@@ -316,7 +306,7 @@ function getEventStartForDebug(item: calendar_v3.Schema$Event): string {
 }
 
 function getColorLabel(colorId: string): string {
-  return colorId === 'default' ? 'デフォルト' : `色 ${colorId}`;
+  return GOOGLE_STANDARD_COLOR_LABELS[colorId] ?? `色 ${colorId}`;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -715,14 +705,12 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
     const syncedAt = new Date().toISOString();
     // processedIds: 同一同期内で同じ item.id を二重処理しない
     const processedIds = new Set<string>();
-    const syncColorIds = getSyncColorIdSet();
     let added = 0;
 
     for (const item of items) {
       if (!item.id) continue;
       if (processedIds.has(item.id)) continue;
       processedIds.add(item.id);
-      if (!isIncludedByColor(item, syncColorIds)) continue;
 
       if (existingMap.has(item.id)) continue; // 同期開始時点で既存 → スキップ
 
@@ -1063,8 +1051,8 @@ export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | Goo
       alreadyImported,
       selectable: validEvents - alreadyImported,
       categories: [...groups.values()].sort((a, b) => {
-        const aIndex = GOOGLE_CATEGORY_DEFINITIONS.findIndex((category) => category.categoryId === a.categoryId);
-        const bIndex = GOOGLE_CATEGORY_DEFINITIONS.findIndex((category) => category.categoryId === b.categoryId);
+        const aIndex = GOOGLE_COLOR_ID_ORDER.indexOf(a.colorIds[0]);
+        const bIndex = GOOGLE_COLOR_ID_ORDER.indexOf(b.colorIds[0]);
         if (aIndex !== -1 || bIndex !== -1) {
           if (aIndex === -1) return 1;
           if (bIndex === -1) return -1;
@@ -1398,20 +1386,19 @@ export async function debugGoogleSync(): Promise<GoogleSyncDebugResult | SyncRes
   });
 
   const existingMap = await buildGoogleEventIdMap();
-  const syncColorIds = getSyncColorIdSet();
   const colorIdCounts: Record<string, number> = {};
   const skippedReasonCounts: Record<string, number> = {};
   const sampleEvents: GoogleSyncDebugResult['sampleEvents'] = [];
   const processedIds = new Set<string>();
+  // 色による取込除外は廃止済み。件数は「全件」= includedByColor として扱う。
   let includedByColor = 0;
-  let excludedByColor = 0;
+  const excludedByColor = 0;
   let wouldAdd = 0;
   let wouldUpdate = 0;
   let wouldDelete = 0;
 
   for (const item of items) {
     const colorId = getEventColorId(item);
-    const included = isIncludedByColor(item, syncColorIds);
     incrementCount(colorIdCounts, colorId);
 
     if (sampleEvents.length < 20) {
@@ -1419,7 +1406,7 @@ export async function debugGoogleSync(): Promise<GoogleSyncDebugResult | SyncRes
         summary: item.summary ?? '(タイトルなし)',
         start: getEventStartForDebug(item),
         colorId,
-        includedByColor: included,
+        includedByColor: true,
       });
     }
 
@@ -1432,12 +1419,6 @@ export async function debugGoogleSync(): Promise<GoogleSyncDebugResult | SyncRes
       continue;
     }
     processedIds.add(item.id);
-
-    if (!included) {
-      excludedByColor++;
-      incrementCount(skippedReasonCounts, 'excluded_by_color');
-      continue;
-    }
     includedByColor++;
 
     const existing = existingMap.get(item.id);
