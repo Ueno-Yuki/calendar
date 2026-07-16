@@ -85,6 +85,26 @@ function formatExclusiveEndDate(value: string): string {
   return formatDate(new Date(date.getTime() - 1).toISOString());
 }
 
+// Google Calendarのイベント色（colorId）に対応する表示色。Google側の固定色。
+const GOOGLE_COLOR_HEX: Record<string, string> = {
+  default: '#4285F4',
+  '1': '#7986CB',
+  '2': '#33B679',
+  '3': '#8E24AA',
+  '4': '#E67C73',
+  '5': '#F6BF26',
+  '6': '#F4511E',
+  '7': '#039BE5',
+  '8': '#616161',
+  '9': '#3F51B5',
+  '10': '#0B8043',
+  '11': '#D60000',
+};
+
+function getCategoryColorHex(category: GoogleSyncCategory): string {
+  return GOOGLE_COLOR_HEX[category.colorIds[0] ?? 'default'] ?? '#9AA0A6';
+}
+
 function formatEventDate(event: GoogleSyncPreviewEvent): string {
   const start = formatDate(event.start);
   const end = formatDate(event.end);
@@ -138,6 +158,7 @@ export default function GoogleSyncPreviewModal({
   const selectedSet = new Set(selectedEventIds);
   const expandedSet = new Set(expandedCategoryIds);
   const canConfirm = selectedEventIds.length > 0 && !syncing;
+  const visibleCategories = preview.categories.filter((category) => category.selectableCount > 0);
 
   return (
     <>
@@ -192,10 +213,10 @@ export default function GoogleSyncPreviewModal({
           )}
 
           <div className="mt-4 divide-y divide-zinc-100 rounded-xl border border-zinc-100">
-            {preview.categories.length === 0 ? (
+            {visibleCategories.length === 0 ? (
               <p className="px-4 py-5 text-center text-sm text-zinc-400">取り込み候補がありません</p>
             ) : (
-              preview.categories.map((category) => {
+              visibleCategories.map((category) => {
                 const categoryEventIds = category.events.map((event) => event.googleEventId);
                 const selectedCount = categoryEventIds.filter((id) => selectedSet.has(id)).length;
                 const checked = selectedCount === categoryEventIds.length && categoryEventIds.length > 0;
@@ -219,9 +240,13 @@ export default function GoogleSyncPreviewModal({
                         className="flex min-w-0 flex-1 items-start gap-2 text-left disabled:opacity-60"
                       >
                       <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium text-zinc-800">
-                          {category.icon && <span className="mr-1">{category.icon}</span>}
-                          {category.label} {category.selectableCount}件
+                        <span className="flex items-center gap-2 text-sm font-medium text-zinc-800">
+                          <span
+                            aria-label={category.label}
+                            className="inline-block h-3 w-3 shrink-0 rounded-full"
+                            style={{ backgroundColor: getCategoryColorHex(category) }}
+                          />
+                          {category.selectableCount}件
                         </span>
                         {category.alreadyImported > 0 && (
                           <span className="mt-1 block text-xs text-zinc-400">
