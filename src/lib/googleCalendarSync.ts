@@ -2,11 +2,13 @@ import type { calendar_v3 } from 'googleapis';
 import type { Event } from '@/types';
 import {
   getRows,
-  appendRowByHeaders,
+  appendRowsByHeaders,
   updateRowByHeaders,
+  batchUpdateRowsByHeaders,
   getMonthSheetName,
   ensureMonthSheet,
   getAllMonthSheetNames,
+  isQuotaExceededError,
 } from '@/lib/sheets';
 import { parseEventRow, eventToRecord } from '@/lib/eventsDb';
 import { getAllSyncMeta, getSyncMeta, setSyncMeta } from '@/lib/syncMetaDb';
@@ -23,6 +25,16 @@ const IMPORT_COMPLETED_KEY = 'mother_google_import_completed';
 const SYNC_LOCK_KEY = 'mother_google_sync_lock';
 const LOCK_TTL_MS = 5 * 60 * 1000; // 5分
 const CALENDAR_ID = () => process.env.GOOGLE_CALENDAR_ID_MOTHER ?? 'primary';
+// 1回のSheets APIバッチ呼び出しに含める最大行数（大量一括インポート時の安全策）
+const SHEETS_BATCH_CHUNK_SIZE = 200;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
 
 // DISABLE_GOOGLE_SYNC=true で全同期処理を停止できる（重複発生時の緊急停止用）
 function isSyncDisabled(): boolean {
@@ -338,17 +350,6 @@ function getApiErrorBodyMessage(error: unknown): string {
   return maybeError.response?.data?.error?.message ?? maybeError.message ?? '';
 }
 
-function isQuotaExceededError(error: unknown): boolean {
-  const status = getApiErrorStatus(error);
-  const message = getApiErrorBodyMessage(error).toLowerCase();
-  return (
-    status === 429 ||
-    message.includes('quota exceeded') ||
-    message.includes('read requests per minute') ||
-    message.includes('rate limit exceeded')
-  );
-}
-
 function isGoogleScopeMissingError(error: unknown): boolean {
   const message = getApiErrorBodyMessage(error).toLowerCase();
   return message.includes('insufficient authentication scopes') || message.includes('insufficientpermissions');
@@ -502,6 +503,45 @@ async function buildExistingImportKeySet(): Promise<Set<string>> {
   return set;
 }
 
+// buildGoogleEventIdMap と buildExistingImportKeySet は同じ月シート群を
+// それぞれ独立に読み直していたため、1回の走査で両方を構築する。
+async function buildSyncIndexes(): Promise<{
+  eventIdMap: Map<string, ExistingEntry>;
+  importKeySet: Set<string>;
+}> {
+  const eventIdMap = new Map<string, ExistingEntry>();
+  const importKeySet = new Set<string>();
+  const monthSheetNames = await getAllMonthSheetNames();
+
+  for (const sheetName of monthSheetNames) {
+    const rows = await getRows(sheetName);
+    rows.forEach((row, idx) => {
+      if (row.deleted !== 'TRUE') {
+        const startDate = row.start_date ?? '';
+        const title = row.title ?? '';
+        if (startDate && title) importKeySet.add(buildImportKey(startDate, title));
+      }
+
+      if (!row.google_event_id) return;
+      const event = parseEventRow(row);
+      const existing = eventIdMap.get(row.google_event_id);
+      if (!existing) {
+        eventIdMap.set(row.google_event_id, { event, sheetName, dataRowIndex: idx });
+      } else {
+        const prevDeleted = existing.event.deleted;
+        const curDeleted = event.deleted;
+        if (prevDeleted && !curDeleted) {
+          eventIdMap.set(row.google_event_id, { event, sheetName, dataRowIndex: idx });
+        } else if (prevDeleted === curDeleted && event.updated_at > existing.event.updated_at) {
+          eventIdMap.set(row.google_event_id, { event, sheetName, dataRowIndex: idx });
+        }
+      }
+    });
+  }
+
+  return { eventIdMap, importKeySet };
+}
+
 async function buildSheetEventEntryMap(): Promise<Map<string, SheetEventEntry>> {
   const map = new Map<string, SheetEventEntry>();
   const monthSheetNames = await getAllMonthSheetNames();
@@ -518,26 +558,21 @@ async function buildSheetEventEntryMap(): Promise<Map<string, SheetEventEntry>> 
   return map;
 }
 
-// ---- append 直前再チェック ----
-// 対象シートを再読して google_event_id の存在を確認する。
-// 並行リクエストが先に append した場合をここで検知できる。
-// rowCount は append 後の existingMap 更新で dataRowIndex として使う
-// （append 前の行数 = 新規行の 0-based インデックス）。
-
-async function recheckSheet(
+// 対象シートを再読して google_event_id の存在をまとめて確認する。
+// バッチ追加の直前に呼び、並行リクエストが先に書いた場合をここで検知する。
+async function recheckSheetForIds(
   sheetName: string,
-  googleEventId: string,
-): Promise<{ existing: ExistingEntry | null; rowCount: number }> {
+  googleEventIds: string[],
+): Promise<{ existingById: Map<string, ExistingEntry>; rowCount: number }> {
   const rows = await getRows(sheetName);
-  const idx = rows.findIndex(
-    (r) => r.google_event_id === googleEventId && r.deleted !== 'TRUE',
-  );
-  return {
-    existing: idx === -1
-      ? null
-      : { event: parseEventRow(rows[idx]), sheetName, dataRowIndex: idx },
-    rowCount: rows.length,
-  };
+  const idSet = new Set(googleEventIds);
+  const existingById = new Map<string, ExistingEntry>();
+  rows.forEach((row, idx) => {
+    if (row.google_event_id && row.deleted !== 'TRUE' && idSet.has(row.google_event_id)) {
+      existingById.set(row.google_event_id, { event: parseEventRow(row), sheetName, dataRowIndex: idx });
+    }
+  });
+  return { existingById, rowCount: rows.length };
 }
 
 async function ensureMonthSheetByName(sheetName: string): Promise<void> {
@@ -701,11 +736,15 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
       showDeleted: false,
     });
 
-    const existingMap = await buildGoogleEventIdMap();
+    const { eventIdMap: existingMap } = await buildSyncIndexes();
+    const headerCache = new Map<string, string[]>();
     const syncedAt = new Date().toISOString();
     // processedIds: 同一同期内で同じ item.id を二重処理しない
     const processedIds = new Set<string>();
     let added = 0;
+
+    type SheetRecord = ReturnType<typeof eventToRecord>;
+    const addsBySheet = new Map<string, Array<{ googleEventId: string; record: SheetRecord }>>();
 
     for (const item of items) {
       if (!item.id) continue;
@@ -721,14 +760,6 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
       const evYear = parseInt(yearStr);
       const evMonth = parseInt(monthStr);
       const targetSheet = getMonthSheetName(evYear, evMonth);
-      await ensureMonthSheet(evYear, evMonth);
-
-      // append直前再チェック: 並行リクエストが先に書いた場合をここで検知する
-      const { existing: recheckExisting, rowCount } = await recheckSheet(targetSheet, item.id);
-      if (recheckExisting) {
-        existingMap.set(item.id, recheckExisting); // マップを最新状態に更新
-        continue;
-      }
 
       const event: Event = {
         id: crypto.randomUUID(),
@@ -750,10 +781,21 @@ export async function importGoogleCalendar(): Promise<SyncResult> {
         deleted: false,
       };
 
-      await appendRowByHeaders(targetSheet, eventToRecord(event));
-      // append後 existingMap を即時更新 → 同一同期内で再 append しない
-      existingMap.set(item.id, { event, sheetName: targetSheet, dataRowIndex: rowCount });
+      const list = addsBySheet.get(targetSheet) ?? [];
+      list.push({ googleEventId: item.id, record: eventToRecord(event) });
+      addsBySheet.set(targetSheet, list);
       added++;
+    }
+
+    for (const [sheetName, adds] of addsBySheet) {
+      await ensureMonthSheetByName(sheetName);
+      // append直前再チェック: 並行リクエストが先に書いた場合をここで検知する
+      const { existingById } = await recheckSheetForIds(sheetName, adds.map((a) => a.googleEventId));
+      const toAppend = adds.filter((a) => !existingById.has(a.googleEventId));
+      added -= adds.length - toAppend.length;
+      for (const chunk of chunkArray(toAppend, SHEETS_BATCH_CHUNK_SIZE)) {
+        await appendRowsByHeaders(sheetName, chunk.map((a) => a.record), headerCache);
+      }
     }
 
     await setSyncMeta(IMPORT_COMPLETED_KEY, 'TRUE');
@@ -813,12 +855,31 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
     });
     fetchedCount = items.length;
 
-    const existingMap = await buildGoogleEventIdMap();
-    const existingImportKeys = await buildExistingImportKeySet();
+    const { eventIdMap: existingMap, importKeySet: existingImportKeys } = await buildSyncIndexes();
+    const headerCache = new Map<string, string[]>();
     const syncedAt = new Date().toISOString();
     // processedIds: 同一同期内で同じ item.id を二重処理しない
     const processedIds = new Set<string>();
     let skippedAlreadyImported = 0;
+
+    type SheetRecord = ReturnType<typeof eventToRecord>;
+    type PendingAdd = { googleEventId: string; record: SheetRecord };
+    type PendingWrite = { dataRowIndex: number; record: SheetRecord };
+
+    // 書き込みは分類フェーズでは行わず、シート単位でまとめてから一括実行する
+    const addsBySheet = new Map<string, PendingAdd[]>();
+    const writesBySheet = new Map<string, PendingWrite[]>();
+
+    const queueAdd = (sheetName: string, add: PendingAdd) => {
+      const list = addsBySheet.get(sheetName) ?? [];
+      list.push(add);
+      addsBySheet.set(sheetName, list);
+    };
+    const queueWrite = (sheetName: string, write: PendingWrite) => {
+      const list = writesBySheet.get(sheetName) ?? [];
+      list.push(write);
+      writesBySheet.set(sheetName, list);
+    };
 
     for (const item of items) {
       if (!item.id) continue;
@@ -834,8 +895,7 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
         // Google 側で削除 → アプリ側も論理削除
         if (existing && !existing.event.deleted) {
           const deletedEvent: Event = { ...existing.event, deleted: true, updated_at: syncedAt };
-          await ensureMonthSheetByName(existing.sheetName);
-          await updateRowByHeaders(existing.sheetName, existing.dataRowIndex, eventToRecord(deletedEvent));
+          queueWrite(existing.sheetName, { dataRowIndex: existing.dataRowIndex, record: eventToRecord(deletedEvent) });
           existingMap.set(item.id, { ...existing, event: deletedEvent }); // マップ更新
           deleted++;
         }
@@ -853,19 +913,11 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
           skippedAlreadyImported++;
           continue;
         }
-        // 新規: 全月シートに存在しない場合のみ append
+        // 新規: 開始日から対象月シートを決定し、書き込みフェーズでまとめて追加する
         const [yearStr, monthStr] = parsed.start_date.split('-');
         const evYear = parseInt(yearStr);
         const evMonth = parseInt(monthStr);
         const targetSheet = getMonthSheetName(evYear, evMonth);
-        await ensureMonthSheet(evYear, evMonth);
-
-        // append直前再チェック: 並行リクエストが先に書いた場合をここで検知する
-        const { existing: recheckExisting, rowCount } = await recheckSheet(targetSheet, item.id);
-        if (recheckExisting) {
-          existingMap.set(item.id, recheckExisting); // マップを最新状態に更新
-          continue;
-        }
 
         const newEvent: Event = {
           id: crypto.randomUUID(),
@@ -887,12 +939,32 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
           deleted: false,
         };
 
-        await appendRowByHeaders(targetSheet, eventToRecord(newEvent));
-        // append後 existingMap を即時更新 → 同一同期内で再 append しない
-        existingMap.set(item.id, { event: newEvent, sheetName: targetSheet, dataRowIndex: rowCount });
+        queueAdd(targetSheet, { googleEventId: item.id, record: eventToRecord(newEvent) });
+        // 同一同期内で同じimportKeyが再度現れても二重追加しないよう即時反映
         existingImportKeys.add(importKey);
         added++;
-      } else if (!existing.event.deleted) {
+      } else if (existing.event.deleted) {
+        // Google側では現存するがアプリ側で論理削除済み。
+        // 明示的なeventIds選択時のみ復元する（自動/色ベース同期では意図的な削除を尊重し何もしない）。
+        if (!syncEventIds) continue;
+        const revivedEvent: Event = {
+          ...existing.event,
+          title: parsed.title,
+          start_date: parsed.start_date,
+          end_date: parsed.end_date,
+          start_time: parsed.start_time,
+          end_time: parsed.end_time,
+          all_day: parsed.all_day,
+          location: parsed.location,
+          memo: parsed.memo,
+          google_color_id: googleColorId,
+          deleted: false,
+          updated_at: syncedAt,
+        };
+        queueWrite(existing.sheetName, { dataRowIndex: existing.dataRowIndex, record: eventToRecord(revivedEvent) });
+        existingMap.set(item.id, { ...existing, event: revivedEvent });
+        updated++;
+      } else {
         // 変更チェック
         const e = existing.event;
         const changed =
@@ -920,11 +992,29 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
             google_color_id: googleColorId,
             updated_at: syncedAt,
           };
-          await ensureMonthSheetByName(existing.sheetName);
-          await updateRowByHeaders(existing.sheetName, existing.dataRowIndex, eventToRecord(updatedEvent));
+          queueWrite(existing.sheetName, { dataRowIndex: existing.dataRowIndex, record: eventToRecord(updatedEvent) });
           existingMap.set(item.id, { ...existing, event: updatedEvent }); // マップ更新
           updated++;
         }
+      }
+    }
+
+    // 書き込みフェーズ: シートごとに1回だけensure（ヘッダー自己修復を保ちつつ、行ごとの呼び出しは避ける）
+    for (const [sheetName, writes] of writesBySheet) {
+      await ensureMonthSheetByName(sheetName);
+      for (const chunk of chunkArray(writes, SHEETS_BATCH_CHUNK_SIZE)) {
+        await batchUpdateRowsByHeaders(sheetName, chunk, headerCache);
+      }
+    }
+
+    // 新規追加: シート未作成の場合の作成、および既存シートのヘッダー自己修復を兼ねてensureする
+    for (const [sheetName, adds] of addsBySheet) {
+      await ensureMonthSheetByName(sheetName);
+      const { existingById } = await recheckSheetForIds(sheetName, adds.map((a) => a.googleEventId));
+      const toAppend = adds.filter((a) => !existingById.has(a.googleEventId));
+      added -= adds.length - toAppend.length; // 並行書き込みで既に存在した分は追加件数から除外
+      for (const chunk of chunkArray(toAppend, SHEETS_BATCH_CHUNK_SIZE)) {
+        await appendRowsByHeaders(sheetName, chunk.map((a) => a.record), headerCache);
       }
     }
 
