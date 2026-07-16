@@ -849,7 +849,7 @@ export async function syncGoogleToApp(selection: GoogleSyncSelection): Promise<S
 
       if (!existing) {
         const importKey = buildImportKey(parsed.start_date, parsed.title);
-        if (existingImportKeys.has(importKey)) {
+        if (!syncEventIds && existingImportKeys.has(importKey)) {
           skippedAlreadyImported++;
           continue;
         }

@@ -313,9 +313,7 @@ export default function CalendarPage() {
       setGoogleSyncDisabled(Boolean(data.syncDisabled));
       return data;
     } catch {
-      setGoogleConnected(false);
-      setGoogleReauthRequired(false);
-      setGoogleSyncDisabled(true);
+      // 通信失敗時は状態不明のため直前の状態を保持する（停止中扱いにしない）。
       return null;
     }
   }, []);
@@ -983,7 +981,9 @@ export default function CalendarPage() {
         method: 'POST',
         body: JSON.stringify({ eventIds: selectedGoogleEventIds }),
       });
-      const data = (await res.json().catch(() => null)) as { reason?: string } | null;
+      const data = (await res.json().catch(() => null)) as
+        | { reason?: string; added?: number; updated?: number; deleted?: number }
+        | null;
 
       if (!res.ok) {
         setGoogleSyncModalError(data?.reason === 'no_events_selected' ? '取り込む予定を選択してください' : 'Google同期に失敗しました');
@@ -1011,7 +1011,8 @@ export default function CalendarPage() {
       setSelectedGoogleEventIds([]);
       setExpandedGoogleCategoryIds([]);
       await reloadEvents();
-      setGoogleSyncMessage('Google同期しました');
+      const changedCount = (data?.added ?? 0) + (data?.updated ?? 0) + (data?.deleted ?? 0);
+      setGoogleSyncMessage(changedCount > 0 ? 'Google同期しました' : '取り込める予定がありませんでした（すでに取り込み済みの可能性があります）');
       setHasRemoteUpdates(false);
       refreshKnownLastUpdated();
     } catch (error: unknown) {
