@@ -1131,6 +1131,13 @@ export async function previewGoogleSync(): Promise<GoogleSyncPreviewResult | Goo
       groups.set(category.categoryId, group);
     }
 
+    for (const group of groups.values()) {
+      group.events.sort((a, b) => {
+        if (a.start !== b.start) return a.start < b.start ? -1 : 1;
+        return (a.startTime ?? '').localeCompare(b.startTime ?? '');
+      });
+    }
+
     return {
       ok: true,
       timeMin,
@@ -1274,6 +1281,12 @@ export async function previewGoogleReverseSync(): Promise<
 
       createCandidates.push(eventToReversePreviewItem(event));
     }
+
+    createCandidates.sort((a, b) => {
+      if (a.startDate !== b.startDate) return a.startDate < b.startDate ? -1 : 1;
+      return (a.startTime ?? '').localeCompare(b.startTime ?? '');
+    });
+    updateCandidates.sort((a, b) => (a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0));
 
     return {
       ok: true,
