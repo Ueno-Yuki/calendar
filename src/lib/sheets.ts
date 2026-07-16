@@ -24,7 +24,52 @@ function isSheetNotFoundError(error: unknown): boolean {
   ) && message.includes('Unable to parse range');
 }
 
+function getApiErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const maybeError = error as { code?: number; response?: { status?: number } };
+  return maybeError.response?.status ?? maybeError.code;
+}
+
+function getApiErrorBodyMessage(error: unknown): string {
+  if (!error || typeof error !== 'object') return '';
+  const maybeError = error as {
+    message?: string;
+    response?: { data?: { error?: { message?: string } } };
+  };
+  return maybeError.response?.data?.error?.message ?? maybeError.message ?? '';
+}
+
+// Sheets API のレート制限(429)/クォータ超過エラーかどうかを判定する。
+export function isQuotaExceededError(error: unknown): boolean {
+  const status = getApiErrorStatus(error);
+  const message = getApiErrorBodyMessage(error).toLowerCase();
+  return (
+    status === 429 ||
+    message.includes('quota exceeded') ||
+    message.includes('read requests per minute') ||
+    message.includes('rate limit exceeded')
+  );
+}
+
+// 429/クォータ超過エラー時のみ指数バックオフでリトライする。
+async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= retries || !isQuotaExceededError(error)) throw error;
+      const delayMs = 500 * 2 ** attempt + Math.random() * 200;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      attempt++;
+    }
+  }
+}
+
+let cachedSheetsClient: ReturnType<typeof google.sheets> | null = null;
+
 function getSheetsClient() {
+  if (cachedSheetsClient) return cachedSheetsClient;
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -33,7 +78,8 @@ function getSheetsClient() {
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
-  return google.sheets({ version: 'v4', auth });
+  cachedSheetsClient = google.sheets({ version: 'v4', auth });
+  return cachedSheetsClient;
 }
 
 const getSpreadsheetId = () => {
@@ -51,10 +97,10 @@ const getSpreadsheetId = () => {
 export async function getRows(sheetName: string): Promise<Record<string, string>[]> {
   try {
     const sheets = getSheetsClient();
-    const res = await sheets.spreadsheets.values.get({
+    const res = await withRetry(() => sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
       range: sheetName,
-    });
+    }));
     const rows = res.data.values ?? [];
     if (rows.length < 2) return [];
     const headers = rows[0] as string[];
@@ -77,13 +123,21 @@ export async function getRows(sheetName: string): Promise<Record<string, string>
  * シートの末尾に行を追加する。
  */
 export async function appendRow(sheetName: string, values: string[]): Promise<void> {
+  await appendRows(sheetName, [values]);
+}
+
+/**
+ * シートの末尾に複数行を1回のAPI呼び出しでまとめて追加する。
+ */
+export async function appendRows(sheetName: string, rows: string[][]): Promise<void> {
+  if (rows.length === 0) return;
   const sheets = getSheetsClient();
-  await sheets.spreadsheets.values.append({
+  await withRetry(() => sheets.spreadsheets.values.append({
     spreadsheetId: getSpreadsheetId(),
     range: `${sheetName}!A1`,
     valueInputOption: 'RAW',
-    requestBody: { values: [values] },
-  });
+    requestBody: { values: rows },
+  }));
 }
 
 /**
@@ -100,26 +154,57 @@ export async function updateRow(
 ): Promise<void> {
   const sheets = getSheetsClient();
   const sheetRowNumber = dataRowIndex + 2; // ヘッダーが row 1 のため +2
-  await sheets.spreadsheets.values.update({
+  await withRetry(() => sheets.spreadsheets.values.update({
     spreadsheetId: getSpreadsheetId(),
     range: `${sheetName}!A${sheetRowNumber}`,
     valueInputOption: 'RAW',
     requestBody: { values: [values] },
-  });
+  }));
+}
+
+/**
+ * 同一シート内の複数行（非連続でも可）を1回のAPI呼び出しでまとめて更新する。
+ */
+export async function batchUpdateRows(
+  sheetName: string,
+  updates: Array<{ dataRowIndex: number; values: string[] }>,
+): Promise<void> {
+  if (updates.length === 0) return;
+  const sheets = getSheetsClient();
+  await withRetry(() => sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: getSpreadsheetId(),
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: updates.map((u) => ({
+        range: `${sheetName}!A${u.dataRowIndex + 2}`,
+        values: [u.values],
+      })),
+    },
+  }));
 }
 
 export async function getSheetHeaders(sheetName: string): Promise<string[]> {
   try {
     const sheets = getSheetsClient();
-    const res = await sheets.spreadsheets.values.get({
+    const res = await withRetry(() => sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
       range: `${sheetName}!1:1`,
-    });
+    }));
     const headers = (res.data.values?.[0] as string[] | undefined) ?? [];
     return headers.length > 0 ? headers : [...EVENT_HEADERS];
   } catch {
     return [...EVENT_HEADERS];
   }
+}
+
+async function getHeadersMaybeCached(
+  sheetName: string,
+  headerCache?: Map<string, string[]>,
+): Promise<string[]> {
+  if (headerCache?.has(sheetName)) return headerCache.get(sheetName)!;
+  const headers = await getSheetHeaders(sheetName);
+  headerCache?.set(sheetName, headers);
+  return headers;
 }
 
 function toCellString(value: SheetWritableValue): string {
@@ -137,8 +222,9 @@ export function buildValuesByHeaders(
 export async function appendRowByHeaders(
   sheetName: string,
   record: Record<string, SheetWritableValue>,
+  headerCache?: Map<string, string[]>,
 ): Promise<void> {
-  const headers = await getSheetHeaders(sheetName);
+  const headers = await getHeadersMaybeCached(sheetName, headerCache);
   await appendRow(sheetName, buildValuesByHeaders(headers, record));
 }
 
@@ -146,9 +232,39 @@ export async function updateRowByHeaders(
   sheetName: string,
   dataRowIndex: number,
   record: Record<string, SheetWritableValue>,
+  headerCache?: Map<string, string[]>,
 ): Promise<void> {
-  const headers = await getSheetHeaders(sheetName);
+  const headers = await getHeadersMaybeCached(sheetName, headerCache);
   await updateRow(sheetName, dataRowIndex, buildValuesByHeaders(headers, record));
+}
+
+/**
+ * 複数の新規行を1回のAPI呼び出しでまとめて追加する（ヘッダー変換込み）。
+ */
+export async function appendRowsByHeaders(
+  sheetName: string,
+  records: Record<string, SheetWritableValue>[],
+  headerCache?: Map<string, string[]>,
+): Promise<void> {
+  if (records.length === 0) return;
+  const headers = await getHeadersMaybeCached(sheetName, headerCache);
+  await appendRows(sheetName, records.map((record) => buildValuesByHeaders(headers, record)));
+}
+
+/**
+ * 複数行の更新を1回のAPI呼び出しでまとめて行う（ヘッダー変換込み）。
+ */
+export async function batchUpdateRowsByHeaders(
+  sheetName: string,
+  updates: Array<{ dataRowIndex: number; record: Record<string, SheetWritableValue> }>,
+  headerCache?: Map<string, string[]>,
+): Promise<void> {
+  if (updates.length === 0) return;
+  const headers = await getHeadersMaybeCached(sheetName, headerCache);
+  await batchUpdateRows(
+    sheetName,
+    updates.map((u) => ({ dataRowIndex: u.dataRowIndex, values: buildValuesByHeaders(headers, u.record) })),
+  );
 }
 
 /**
@@ -169,43 +285,43 @@ export async function ensureSheet(
   const spreadsheetId = getSpreadsheetId();
   const sheets = getSheetsClient();
 
-  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId }));
   const exists = meta.data.sheets?.some((s) => s.properties?.title === sheetName) ?? false;
 
   if (exists) {
-    const res = await sheets.spreadsheets.values.get({
+    const res = await withRetry(() => sheets.spreadsheets.values.get({
       spreadsheetId,
       range: `${sheetName}!1:1`,
-    });
+    }));
     const currentHeaders = (res.data.values?.[0] as string[] | undefined) ?? [];
     const mergedHeaders = [...currentHeaders];
     headers.forEach((header) => {
       if (!mergedHeaders.includes(header)) mergedHeaders.push(header);
     });
     if (mergedHeaders.length !== currentHeaders.length) {
-      await sheets.spreadsheets.values.update({
+      await withRetry(() => sheets.spreadsheets.values.update({
         spreadsheetId,
         range: `${sheetName}!A1`,
         valueInputOption: 'RAW',
         requestBody: { values: [mergedHeaders] },
-      });
+      }));
     }
     return;
   }
 
-  await sheets.spreadsheets.batchUpdate({
+  await withRetry(() => sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
       requests: [{ addSheet: { properties: { title: sheetName } } }],
     },
-  });
+  }));
 
-  await sheets.spreadsheets.values.update({
+  await withRetry(() => sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${sheetName}!A1`,
     valueInputOption: 'RAW',
     requestBody: { values: [headers as unknown as string[]] },
-  });
+  }));
 }
 
 /**
@@ -223,7 +339,7 @@ export async function ensureMonthSheet(year: number, month: number): Promise<voi
 export async function getAllMonthSheetNames(): Promise<string[]> {
   const spreadsheetId = getSpreadsheetId();
   const sheets = getSheetsClient();
-  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const meta = await withRetry(() => sheets.spreadsheets.get({ spreadsheetId }));
   return (meta.data.sheets ?? [])
     .map((s) => s.properties?.title ?? '')
     .filter((name) => /^\d{4}-\d{2}$/.test(name));
