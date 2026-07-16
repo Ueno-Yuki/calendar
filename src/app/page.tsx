@@ -998,14 +998,6 @@ export default function CalendarPage() {
         setGoogleSyncModalError('Googleカレンダーが未連携です');
         return;
       }
-      if (data?.reason === 'too_soon') {
-        setGoogleSyncMessage('直近で同期済みです');
-        setGoogleSyncPreview(null);
-        setSelectedGoogleEventIds([]);
-        setExpandedGoogleCategoryIds([]);
-        return;
-      }
-
       syncSucceeded = true;
       setGoogleSyncPreview(null);
       setSelectedGoogleEventIds([]);
